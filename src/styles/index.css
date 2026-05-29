@@ -235,6 +235,10 @@ body {
 
 /* ===== Animation Utilities ===== */
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

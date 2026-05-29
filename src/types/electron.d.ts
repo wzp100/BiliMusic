@@ -43,6 +43,21 @@ interface BiliApi {
   logout: () => Promise<{ success: boolean }>
 }
 
+export interface LrclibRecord {
+  id: number
+  trackName: string
+  artistName: string
+  albumName: string
+  duration: number
+  instrumental: boolean
+  plainLyrics: string | null
+  syncedLyrics: string | null
+}
+
+interface LyricsApi {
+  search: (query: { q?: string; trackName?: string; artistName?: string }) => Promise<LrclibRecord[]>
+}
+
 declare global {
   interface Window {
     electronAPI: {
@@ -51,6 +66,7 @@ declare global {
       close: () => void
       platform: string
       biliApi: BiliApi
+      lyricsApi: LyricsApi
     }
   }
 }

@@ -47,10 +47,17 @@ const biliApi = {
     ipcRenderer.invoke('bili:logout'),
 }
 
+const lyricsApi = {
+  // 搜索歌词候选（每条已含 synced/plain 歌词）
+  search: (query) =>
+    ipcRenderer.invoke('lyrics:search', query),
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('window:minimize'),
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
   platform: 'win32',
   biliApi,
+  lyricsApi,
 })

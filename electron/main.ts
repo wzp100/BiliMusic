@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, session } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { registerBiliApiHandlers } from './biliApi'
+import { registerLyricsApiHandlers } from './lyricsApi'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -113,6 +114,7 @@ ipcMain.on('window:close', () => mainWindow?.close())
 app.whenReady().then(() => {
   setupBiliHeaders()
   registerBiliApiHandlers()
+  registerLyricsApiHandlers()
   createWindow()
 })
 

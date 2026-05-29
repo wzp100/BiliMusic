@@ -12,12 +12,16 @@ import {
   Mic,
   Music,
 } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { useState } from 'react'
+import { motion } from 'framer-motion'
 import { usePlayer } from '@/contexts/PlayerContext'
+import { useNowPlaying } from '@/contexts/NowPlayingContext'
 import PlayQueue from '@/components/PlayQueue'
+import PlayerSlider from '@/components/PlayerSlider'
 
 export default function PlayerBar() {
   const player = usePlayer()
+  const { open } = useNowPlaying()
   const [queueOpen, setQueueOpen] = useState(false)
   const trackDuration = player.duration || player.currentTrack?.duration || 0
 
@@ -36,7 +40,7 @@ export default function PlayerBar() {
         flexShrink: 0,
       } as React.CSSProperties}
     >
-      {/* Left — Track Info */}
+      {/* Left — Track Info（点击封面/标题进入歌词页，一镜到底）*/}
       <div
         style={{
           width: 220,
@@ -47,56 +51,73 @@ export default function PlayerBar() {
         }}
       >
         <div
+          onClick={() => { if (player.currentTrack) open() }}
+          title={player.currentTrack ? '查看歌词' : undefined}
           style={{
-            width: 48,
-            height: 48,
-            borderRadius: 'var(--radius-md)',
-            background: player.currentTrack
-              ? 'var(--color-card)'
-              : 'var(--color-border)',
-            overflow: 'hidden',
-            border: '1px solid var(--glass-border)',
-            boxShadow: 'var(--shadow-sm)',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
+            gap: 12,
+            flex: 1,
+            minWidth: 0,
+            cursor: player.currentTrack ? 'pointer' : 'default',
           }}
         >
-          {player.currentTrack?.coverUrl ? (
-            <img
-              src={player.currentTrack.coverUrl}
-              alt={player.currentTrack.title}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-          ) : (
-            <Music size={20} style={{ color: 'var(--color-muted)' }} />
-          )}
-        </div>
-
-        <div style={{ minWidth: 0, flex: 1 }}>
           <div
-            className="text-body"
             style={{
-              color: player.currentTrack
-                ? 'var(--color-foreground)'
-                : 'var(--color-muted)',
-              whiteSpace: 'nowrap',
+              width: 48,
+              height: 48,
+              borderRadius: 'var(--radius-md)',
+              background: player.currentTrack
+                ? 'var(--color-card)'
+                : 'var(--color-border)',
               overflow: 'hidden',
-              textOverflow: 'ellipsis',
+              border: '1px solid var(--glass-border)',
+              boxShadow: 'var(--shadow-sm)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
             }}
           >
-            {player.currentTrack?.title || '未在播放'}
+            {player.currentTrack?.coverUrl ? (
+              <motion.img
+                layoutId="np-cover"
+                transition={{ type: 'spring', stiffness: 300, damping: 32 }}
+                src={player.currentTrack.coverUrl}
+                alt={player.currentTrack.title}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            ) : (
+              <Music size={20} style={{ color: 'var(--color-muted)' }} />
+            )}
           </div>
-          <div
-            className="text-caption"
-            style={{
-              color: 'var(--color-muted)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {player.currentTrack?.artist || '搜索并添加音乐'}
+
+          <div style={{ minWidth: 0, flex: 1 }}>
+            {player.currentTrack ? (
+              <>
+                <motion.div
+                  layoutId="np-title"
+                  transition={{ type: 'spring', stiffness: 300, damping: 32 }}
+                  className="text-body"
+                  style={{ color: 'var(--color-foreground)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                >
+                  {player.currentTrack.title}
+                </motion.div>
+                <motion.div
+                  layoutId="np-artist"
+                  transition={{ type: 'spring', stiffness: 300, damping: 32 }}
+                  className="text-caption"
+                  style={{ color: 'var(--color-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                >
+                  {player.currentTrack.artist}
+                </motion.div>
+              </>
+            ) : (
+              <>
+                <div className="text-body" style={{ color: 'var(--color-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>未在播放</div>
+                <div className="text-caption" style={{ color: 'var(--color-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>搜索并添加音乐</div>
+              </>
+            )}
           </div>
         </div>
 
@@ -112,6 +133,7 @@ export default function PlayerBar() {
                 : 'var(--color-muted)',
               padding: 4,
               transition: 'color var(--duration-fast)',
+              flexShrink: 0,
             }}
           >
             <Heart
@@ -269,170 +291,6 @@ export default function PlayerBar() {
   )
 }
 
-interface PlayerSliderProps {
-  ariaLabel: string
-  value: number
-  max: number
-  onChange: (value: number) => void
-  min?: number
-  step?: number
-  width?: number | string
-  disabled?: boolean
-  formatValue?: (value: number) => string
-  variant: 'progress' | 'volume'
-}
-
-function PlayerSlider({
-  ariaLabel,
-  value,
-  max,
-  onChange,
-  min = 0,
-  step,
-  width = '100%',
-  disabled = false,
-  formatValue,
-  variant,
-}: PlayerSliderProps) {
-  const trackRef = useRef<HTMLDivElement>(null)
-  const [isHovered, setIsHovered] = useState(false)
-  const [isDragging, setIsDragging] = useState(false)
-  const safeMax = Math.max(max, min)
-  const valueRange = safeMax - min
-  const clampedValue = clamp(value, min, safeMax)
-  const percent = valueRange > 0 ? ((clampedValue - min) / valueRange) * 100 : 0
-  const isActive = isHovered || isDragging
-  const keyboardStep = step ?? Math.max(valueRange / 100, 1)
-
-  const updateFromClientX = useCallback((clientX: number) => {
-    if (disabled || valueRange <= 0) return
-    const rect = trackRef.current?.getBoundingClientRect()
-    if (!rect || rect.width <= 0) return
-    const nextPercent = clamp((clientX - rect.left) / rect.width, 0, 1)
-    onChange(min + nextPercent * valueRange)
-  }, [disabled, min, onChange, valueRange])
-
-  const handlePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    setIsDragging(false)
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-  }, [])
-
-  return (
-    <div
-      ref={trackRef}
-      role="slider"
-      aria-label={ariaLabel}
-      aria-valuemin={min}
-      aria-valuemax={safeMax}
-      aria-valuenow={Math.round(clampedValue)}
-      aria-valuetext={formatValue ? formatValue(clampedValue) : String(Math.round(clampedValue))}
-      aria-disabled={disabled || undefined}
-      data-slider={variant}
-      tabIndex={disabled ? -1 : 0}
-      onPointerDown={(event) => {
-        if (disabled) return
-        event.preventDefault()
-        event.currentTarget.setPointerCapture(event.pointerId)
-        setIsDragging(true)
-        updateFromClientX(event.clientX)
-      }}
-      onPointerMove={(event) => {
-        if (isDragging) updateFromClientX(event.clientX)
-      }}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onKeyDown={(event) => {
-        if (disabled) return
-
-        if (event.key === 'Home') {
-          event.preventDefault()
-          onChange(min)
-          return
-        }
-
-        if (event.key === 'End') {
-          event.preventDefault()
-          onChange(safeMax)
-          return
-        }
-
-        const direction = event.key === 'ArrowRight' || event.key === 'ArrowUp'
-          ? 1
-          : event.key === 'ArrowLeft' || event.key === 'ArrowDown'
-            ? -1
-            : 0
-
-        if (direction !== 0) {
-          event.preventDefault()
-          onChange(clamp(clampedValue + direction * keyboardStep, min, safeMax))
-        }
-      }}
-      style={{
-        flex: width === '100%' ? 1 : undefined,
-        width,
-        height: 20,
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'center',
-        cursor: disabled ? 'default' : 'pointer',
-        opacity: disabled ? 0.75 : 1,
-        touchAction: 'none',
-        outline: 'none',
-      }}
-    >
-      <div
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          top: '50%',
-          height: isActive ? 6 : 4,
-          transform: 'translateY(-50%)',
-          background: 'var(--color-border)',
-          borderRadius: 'var(--radius-full)',
-          transition: 'height var(--duration-fast)',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: '50%',
-          height: isActive ? 6 : 4,
-          width: `${percent}%`,
-          transform: 'translateY(-50%)',
-          background: 'var(--color-accent)',
-          borderRadius: 'var(--radius-full)',
-          transition: isDragging
-            ? 'height var(--duration-fast)'
-            : 'width 200ms linear, height var(--duration-fast)',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          left: `${percent}%`,
-          top: '50%',
-          width: 12,
-          height: 12,
-          borderRadius: 'var(--radius-full)',
-          background: 'var(--color-on-accent)',
-          border: '2px solid var(--color-accent)',
-          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.18)',
-          opacity: isActive && !disabled ? 1 : 0,
-          transform: `translate(-50%, -50%) scale(${isActive ? 1 : 0.7})`,
-          transition: 'opacity var(--duration-fast), transform var(--duration-fast)',
-          pointerEvents: 'none',
-        }}
-      />
-    </div>
-  )
-}
-
 function PlayButton({ isPlaying, loading, onClick }: { isPlaying: boolean; loading?: boolean; onClick: () => void }) {
   return (
     <button
@@ -490,10 +348,6 @@ function ControlButton({ icon, active = false, onClick }: { icon: React.ReactNod
       {icon}
     </button>
   )
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max)
 }
 
 function formatTime(seconds: number): string {

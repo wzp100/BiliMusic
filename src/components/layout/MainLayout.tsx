@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom'
 import TitleBar from './TitleBar'
 import Sidebar from './Sidebar'
 import PlayerBar from './PlayerBar'
+import NowPlaying from '@/components/NowPlaying'
 
 export default function MainLayout() {
   return (
@@ -38,6 +39,8 @@ export default function MainLayout() {
       </div>
 
       <PlayerBar />
+
+      <NowPlaying />
     </div>
   )
 }
