@@ -140,22 +140,7 @@ export default function LyricsView({ lines, currentTime, synced, onSeek }: Lyric
                 textShadow: isActive ? '0 8px 34px rgba(0,0,0,0.44), 0 0 26px rgba(255,255,255,0.1)' : 'none',
               }}
             >
-              <span style={{ position: 'relative', display: 'inline-block' }}>
-                {isActive && (
-                  <motion.span
-                    layoutId="active-lyric-glow"
-                    style={{
-                      position: 'absolute',
-                      inset: '-8px -14px',
-                      borderRadius: 18,
-                      background: 'linear-gradient(90deg, rgba(255,55,95,0.22), rgba(255,255,255,0.06))',
-                      zIndex: -1,
-                    }}
-                    transition={{ type: 'spring', stiffness: 240, damping: 28 }}
-                  />
-                )}
-                {l.text}
-              </span>
+              {l.text}
             </motion.div>
           )
         })}

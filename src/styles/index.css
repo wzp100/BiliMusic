@@ -1135,24 +1135,6 @@ body {
   -webkit-backdrop-filter: blur(18px);
 }
 
-.now-playing-top__center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 13px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0;
-}
-
 .now-playing-main {
   position: relative;
   z-index: 2;
@@ -1348,12 +1330,10 @@ body {
   height: min(78vh, 760px);
   min-height: 460px;
   min-width: 0;
-  border-radius: 28px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.055));
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.34), inset 0 1px rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(34px) saturate(1.4);
-  -webkit-backdrop-filter: blur(34px) saturate(1.4);
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -1362,39 +1342,9 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 22px;
+  padding: 0;
 }
 
-.lyrics-panel__top {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 46px;
-  margin-bottom: 12px;
-}
-
-.lyrics-panel__top p {
-  color: #ff375f;
-  font-size: 12px;
-  font-weight: 850;
-  letter-spacing: 0;
-  margin-bottom: 2px;
-}
-
-.lyrics-panel__top h2 {
-  max-width: 44vw;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 17px;
-  line-height: 1.25;
-  font-weight: 800;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lyrics-panel__top button,
 .lyrics-centered button,
 .lyrics-drawer__search button,
 .lyrics-drawer__retry {
@@ -1409,12 +1359,6 @@ body {
   font: 750 13px/1 var(--font-body);
   cursor: pointer;
   white-space: nowrap;
-}
-
-.lyrics-panel__top button {
-  min-height: 32px;
-  padding: 0 12px;
-  color: rgba(255, 255, 255, 0.78);
 }
 
 .lyrics-panel__body {
@@ -1610,7 +1554,4 @@ body {
     min-height: 420px;
   }
 
-  .lyrics-panel__top h2 {
-    max-width: 58vw;
-  }
 }

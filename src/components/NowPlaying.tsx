@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat,
-  Heart, Volume2, VolumeX, Search, Music, Loader2, X, Sparkles,
+  Heart, Volume2, VolumeX, Search, Music, Loader2, X,
 } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useNowPlaying } from '@/contexts/NowPlayingContext'
@@ -77,10 +77,6 @@ export default function NowPlaying() {
             >
               <ChevronDown size={21} />
             </motion.button>
-            <div className="now-playing-top__center">
-              <Sparkles size={14} />
-              <span>Now Playing</span>
-            </div>
           </header>
 
           <main className="now-playing-main">
@@ -246,17 +242,6 @@ function LyricsPanel({
 
   return (
     <div className="lyrics-panel">
-      <div className="lyrics-panel__top">
-        <div>
-          <p>Lyrics</p>
-          <h2>{result ? `${result.trackName} - ${result.artistName}` : '歌词'}</h2>
-        </div>
-        <button type="button" onClick={openSearch}>
-          <Search size={14} />
-          歌词不对？
-        </button>
-      </div>
-
       <div className="lyrics-panel__body">
         {status === 'loading' && (
           <Centered>
