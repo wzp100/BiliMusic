@@ -1,5 +1,6 @@
 import { Maximize2, Minimize2, Minus, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import appIcon from '@/assets/icon.png'
 
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
@@ -14,7 +15,10 @@ export default function TitleBar() {
 
   return (
     <div className="app-titlebar">
-      <span className="app-titlebar__brand">biliMusic</span>
+      <div className="app-titlebar__brand">
+        <img src={appIcon} alt="" className="app-titlebar__logo" draggable={false} />
+        biliMusic
+      </div>
 
       <div className="app-titlebar__controls">
         <WindowButton icon={<Minus size={14} />} action="minimize" label="最小化" />

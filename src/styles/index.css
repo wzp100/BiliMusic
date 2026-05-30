@@ -699,11 +699,23 @@ body {
 }
 
 .app-titlebar__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--color-primary);
   font-family: var(--font-heading);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0;
+}
+
+.app-titlebar__logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  object-fit: contain;
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .app-titlebar__controls {
