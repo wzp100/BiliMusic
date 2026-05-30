@@ -71,6 +71,8 @@ function setupBiliHeaders() {
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let trayWindow: BrowserWindow | null = null
+let trayWindowReady = false
+let pendingTrayShow: { x: number; y: number } | null = null
 let isQuitting = false
 
 type TrayCommand = 'toggle-play' | 'next' | 'prev' | 'show-window' | 'quit'
@@ -299,6 +301,7 @@ function getTrayHtml() {
 
 function createTrayWindow() {
   if (trayWindow) return trayWindow
+  trayWindowReady = false
   trayWindow = new BrowserWindow({
     width: 330,
     height: 292,
@@ -309,23 +312,56 @@ function createTrayWindow() {
     alwaysOnTop: true,
     transparent: true,
     backgroundColor: '#00000000',
+    opacity: 0,
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
     },
   })
   trayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(getTrayHtml())}`)
-  trayWindow.on('blur', () => trayWindow?.hide())
+  trayWindow.once('ready-to-show', () => {
+    trayWindowReady = true
+    if (pendingTrayShow) {
+      const pos = pendingTrayShow
+      pendingTrayShow = null
+      showTrayWindowAt(pos.x, pos.y)
+    }
+  })
+  trayWindow.on('blur', () => {
+    trayWindow?.setOpacity(0)
+    trayWindow?.hide()
+  })
   trayWindow.on('closed', () => {
     trayWindow = null
+    trayWindowReady = false
+    pendingTrayShow = null
   })
   return trayWindow
+}
+
+function showTrayWindowAt(x: number, y: number) {
+  const win = createTrayWindow()
+  if (!trayWindowReady) {
+    pendingTrayShow = { x, y }
+    return
+  }
+  win.setPosition(x, y, false)
+  updateTrayState()
+  win.setOpacity(0)
+  win.showInactive()
+  setTimeout(() => {
+    if (!trayWindow?.isVisible()) return
+    trayWindow.setOpacity(1)
+    trayWindow.focus()
+  }, 20)
 }
 
 function toggleTrayWindow() {
   if (!tray) return
   const win = createTrayWindow()
   if (win.isVisible()) {
+    win.setOpacity(0)
     win.hide()
     return
   }
@@ -339,10 +375,7 @@ function toggleTrayWindow() {
   const belowY = bounds.y + bounds.height + 10
   const y = aboveY >= workArea.y ? aboveY : Math.min(belowY, workArea.y + workArea.height - height - 8)
 
-  win.setPosition(x, Math.round(y), false)
-  win.show()
-  win.focus()
-  updateTrayState()
+  showTrayWindowAt(x, Math.round(y))
 }
 
 function createTray() {
@@ -352,6 +385,7 @@ function createTray() {
   tray.on('click', showMainWindow)
   tray.on('double-click', showMainWindow)
   tray.on('right-click', toggleTrayWindow)
+  createTrayWindow()
 }
 
 function hideToTray() {

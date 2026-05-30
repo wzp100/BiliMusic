@@ -43,7 +43,57 @@ interface PlayerActions {
 
 type PlayerContext = PlayerState & PlayerActions
 
+interface PersistedPlayerState {
+  currentTrack: Track | null
+  queue: Track[]
+  progress: number
+  duration: number
+  volume: number
+  isMuted: boolean
+  repeatMode: RepeatMode
+  isShuffled: boolean
+  wasPlaying: boolean
+  currentIndex: number
+}
+
 const PlayerContext = createContext<PlayerContext | null>(null)
+const PLAYER_STATE_KEY = 'bilimusic_player_state'
+
+function loadPersistedPlayerState(): PersistedPlayerState {
+  const fallbackVolume = localStorage.getItem('bilimusic_volume')
+  const fallback: PersistedPlayerState = {
+    currentTrack: null,
+    queue: [],
+    progress: 0,
+    duration: 0,
+    volume: fallbackVolume ? parseInt(fallbackVolume) : 80,
+    isMuted: false,
+    repeatMode: 'none',
+    isShuffled: false,
+    wasPlaying: false,
+    currentIndex: -1,
+  }
+
+  try {
+    const raw = localStorage.getItem(PLAYER_STATE_KEY)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as Partial<PersistedPlayerState>
+    const queue = Array.isArray(parsed.queue) ? parsed.queue : []
+    return {
+      ...fallback,
+      ...parsed,
+      currentTrack: parsed.currentTrack || null,
+      queue,
+      progress: Math.max(0, Number(parsed.progress || 0)),
+      duration: Math.max(0, Number(parsed.duration || 0)),
+      volume: Math.min(100, Math.max(0, Number(parsed.volume ?? fallback.volume))),
+      currentIndex: Number.isFinite(parsed.currentIndex) ? Number(parsed.currentIndex) : -1,
+      repeatMode: parsed.repeatMode === 'one' || parsed.repeatMode === 'all' ? parsed.repeatMode : 'none',
+    }
+  } catch {
+    return fallback
+  }
+}
 
 function shuffleArray<T>(arr: T[]): T[] {
   const a = [...arr]
@@ -56,24 +106,23 @@ function shuffleArray<T>(arr: T[]): T[] {
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const { settings } = useAppSettings()
-  const [currentTrack, setCurrentTrack] = useState<Track | null>(null)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [duration, setDuration] = useState(0)
-  const [volume, setVolumeState] = useState(() => {
-    const v = localStorage.getItem('bilimusic_volume')
-    return v ? parseInt(v) : 80
-  })
-  const [isMuted, setIsMuted] = useState(false)
-  const [repeatMode, setRepeatMode] = useState<RepeatMode>('none')
-  const [isShuffled, setIsShuffled] = useState(false)
-  const [queue, setQueue] = useState<Track[]>([])
+  const restoredRef = useRef(loadPersistedPlayerState())
+  const [currentTrack, setCurrentTrack] = useState<Track | null>(() => restoredRef.current.currentTrack)
+  const [isPlaying, setIsPlaying] = useState(() => Boolean(restoredRef.current.currentTrack && restoredRef.current.wasPlaying))
+  const [progress, setProgress] = useState(() => restoredRef.current.progress)
+  const [duration, setDuration] = useState(() => restoredRef.current.duration)
+  const [volume, setVolumeState] = useState(() => restoredRef.current.volume)
+  const [isMuted, setIsMuted] = useState(() => restoredRef.current.isMuted)
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>(() => restoredRef.current.repeatMode)
+  const [isShuffled, setIsShuffled] = useState(() => restoredRef.current.isShuffled)
+  const [queue, setQueue] = useState<Track[]>(() => restoredRef.current.queue)
   const [loadingAudio, setLoadingAudio] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const shuffledQueueRef = useRef<Track[]>([])
-  const currentIndexRef = useRef(-1)
+  const currentIndexRef = useRef(restoredRef.current.currentIndex)
+  const shouldAutoplayRef = useRef(Boolean(restoredRef.current.currentTrack && restoredRef.current.wasPlaying))
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const showToast = useCallback((msg: string) => {
@@ -135,6 +184,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       case 'one':
         if (audioRef.current) {
           audioRef.current.currentTime = 0
+          shouldAutoplayRef.current = true
           audioRef.current.play().catch(() => {})
         }
         return
@@ -142,6 +192,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const nextIdx = currentIndexRef.current + 1 >= displayQueue.length
           ? 0 : currentIndexRef.current + 1
         currentIndexRef.current = nextIdx
+        shouldAutoplayRef.current = true
         setCurrentTrack(displayQueue[nextIdx])
         setProgress(0)
         setIsPlaying(true)
@@ -154,6 +205,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           return
         }
         currentIndexRef.current = nextIdx
+        shouldAutoplayRef.current = true
         setCurrentTrack(displayQueue[nextIdx])
         setProgress(0)
         setIsPlaying(true)
@@ -176,10 +228,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           : undefined
         const source = await extractAudio(currentTrack!.bvid || currentTrack!.id, fallback)
         if (cancelled) return
+        const targetProgress = progress > 0 ? progress : 0
         audio.src = source.audioUrl
-        audio.currentTime = 0
-        await audio.play()
-        setIsPlaying(true)
+        audio.currentTime = targetProgress
+        if (shouldAutoplayRef.current) {
+          await audio.play()
+          setIsPlaying(true)
+        } else {
+          audio.pause()
+          setIsPlaying(false)
+        }
         setDuration(source.duration || audio.duration || 0)
 
         // 更新封面（提取到的可能更高清）
@@ -211,6 +269,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [handleTrackEnd])
 
   const play = useCallback((track: Track) => {
+    shouldAutoplayRef.current = true
     setCurrentTrack(track)
     setProgress(0)
     const displayQueue = isShuffled ? shuffledQueueRef.current : queue
@@ -219,6 +278,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [isShuffled, queue])
 
   const pause = useCallback(() => {
+    shouldAutoplayRef.current = false
     audioRef.current?.pause()
     setIsPlaying(false)
   }, [])
@@ -226,9 +286,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const togglePlay = useCallback(() => {
     if (!currentTrack) return
     if (isPlaying) {
+      shouldAutoplayRef.current = false
       audioRef.current?.pause()
       setIsPlaying(false)
     } else {
+      shouldAutoplayRef.current = true
       audioRef.current?.play().then(() => setIsPlaying(true)).catch(() => {})
     }
   }, [currentTrack, isPlaying])
@@ -239,6 +301,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const nextIdx = currentIndexRef.current + 1 >= displayQueue.length
       ? 0 : currentIndexRef.current + 1
     currentIndexRef.current = nextIdx
+    shouldAutoplayRef.current = true
     setCurrentTrack(displayQueue[nextIdx])
     setProgress(0)
     setIsPlaying(true)
@@ -250,6 +313,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const prevIdx = currentIndexRef.current - 1 < 0
       ? displayQueue.length - 1 : currentIndexRef.current - 1
     currentIndexRef.current = prevIdx
+    shouldAutoplayRef.current = true
     setCurrentTrack(displayQueue[prevIdx])
     setProgress(0)
     setIsPlaying(true)
@@ -272,6 +336,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (prev.some(t => t.id === track.id)) return prev
       const newQueue = [...prev, track]
       if (!currentTrack) {
+        shouldAutoplayRef.current = true
         setCurrentTrack(track)
         currentIndexRef.current = 0
       }
@@ -286,6 +351,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const newTracks = tracks.filter(t => !existingIds.has(t.id))
       const newQueue = [...prev, ...newTracks]
       if (!currentTrack && newQueue.length > 0) {
+        shouldAutoplayRef.current = true
         setCurrentTrack(newQueue[0])
         currentIndexRef.current = 0
       }
@@ -334,6 +400,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // 立即播放：把曲目置于队列首位并播放（点击歌曲的默认行为）
   const playNow = useCallback((track: Track) => {
+    shouldAutoplayRef.current = true
     setQueue(prev => [track, ...prev.filter(t => t.id !== track.id)])
     setCurrentTrack(track)
     setProgress(0)
@@ -356,6 +423,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [currentTrack, resyncIndex, showToast, playNow])
 
   const clearQueue = useCallback(() => {
+    shouldAutoplayRef.current = false
     setQueue([])
     setCurrentTrack(null)
     setIsPlaying(false)
@@ -380,6 +448,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const favIds = new Set(favs.map(t => t.id))
     const synced = tracks.map(t => ({ ...t, isLiked: favIds.has(t.id) }))
     setQueue(synced)
+    shouldAutoplayRef.current = true
     setCurrentTrack(synced[0])
     currentIndexRef.current = 0
     setProgress(0)
@@ -390,6 +459,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const displayQueue = isShuffled ? shuffledQueueRef.current : queue
     if (index < 0 || index >= displayQueue.length) return
     currentIndexRef.current = index
+    shouldAutoplayRef.current = true
     setCurrentTrack(displayQueue[index])
     setProgress(0)
     setIsPlaying(true)
@@ -399,6 +469,36 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     shuffledQueueRef.current = isShuffled ? shuffleArray(queue) : queue
   }, [queue, isShuffled])
+
+  useEffect(() => {
+    if (!currentTrack) {
+      currentIndexRef.current = -1
+      return
+    }
+    const displayQueue = isShuffled ? shuffledQueueRef.current : queue
+    const index = displayQueue.findIndex(track => track.id === currentTrack.id)
+    currentIndexRef.current = index >= 0 ? index : 0
+  }, [currentTrack?.id, isShuffled, queue])
+
+  useEffect(() => {
+    try {
+      const state: PersistedPlayerState = {
+        currentTrack,
+        queue,
+        progress,
+        duration,
+        volume,
+        isMuted,
+        repeatMode,
+        isShuffled,
+        wasPlaying: isPlaying,
+        currentIndex: currentIndexRef.current,
+      }
+      localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify(state))
+    } catch {
+      // ignore persistence failures
+    }
+  }, [currentTrack, duration, isMuted, isPlaying, isShuffled, progress, queue, repeatMode, volume])
 
   useEffect(() => {
     window.electronAPI?.updateTrayPlayerState?.({
