@@ -698,6 +698,10 @@ body {
   -webkit-app-region: drag;
 }
 
+.app-titlebar--native {
+  padding-right: 16px;
+}
+
 .app-titlebar__brand {
   display: inline-flex;
   align-items: center;

@@ -6,6 +6,7 @@ import { registerLyricsApiHandlers } from './lyricsApi'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const isHarmonyOS = (process.platform as string) === 'openharmony'
 
 // 生产环境用自定义 app:// 协议加载渲染层：file:// 下 ESM(type=module) 脚本会被
 // Chromium 的 CORS 策略拦截（file:// 为不透明源）导致页面空白。自定义标准安全协议
@@ -103,16 +104,17 @@ let trayPlayerState: TrayPlayerState = {
 }
 
 // 应用图标：dev 时从 electron 源目录加载，打包后从 dist-electron 同级加载（由 copy 脚本随构建复制）
-function loadAppIcon() {
+function loadAppIcon(fileName = 'icon.png') {
   const iconPath = process.env.VITE_DEV_SERVER_URL
-    ? path.join(__dirname, '../electron/icon.png')
-    : path.join(__dirname, 'icon.png')
+    ? path.join(__dirname, '../electron', fileName)
+    : path.join(__dirname, fileName)
   return nativeImage.createFromPath(iconPath)
 }
 
 function createTrayIcon() {
+  const trayIcon = isHarmonyOS ? loadAppIcon('tray.png') : loadAppIcon()
   // 托盘图标尺寸较小，缩放到 32px 以兼顾标准与高 DPI 显示
-  return loadAppIcon().resize({ width: 32, height: 32 })
+  return trayIcon.resize({ width: 32, height: 32 })
 }
 
 function showMainWindow() {
@@ -305,6 +307,7 @@ function getTrayHtml() {
 }
 
 function createTrayWindow() {
+  if (isHarmonyOS) return null
   if (trayWindow) return trayWindow
   trayWindowReady = false
   trayWindow = new BrowserWindow({
@@ -347,6 +350,7 @@ function createTrayWindow() {
 
 function showTrayWindowAt(x: number, y: number) {
   const win = createTrayWindow()
+  if (!win) return
   if (!trayWindowReady) {
     pendingTrayShow = { x, y }
     return
@@ -363,8 +367,10 @@ function showTrayWindowAt(x: number, y: number) {
 }
 
 function toggleTrayWindow() {
+  if (isHarmonyOS) return
   if (!tray) return
   const win = createTrayWindow()
+  if (!win) return
   if (win.isVisible()) {
     win.setOpacity(0)
     win.hide()
@@ -389,8 +395,10 @@ function createTray() {
   tray.setToolTip('BiliMusic')
   tray.on('click', showMainWindow)
   tray.on('double-click', showMainWindow)
-  tray.on('right-click', toggleTrayWindow)
-  createTrayWindow()
+  if (!isHarmonyOS) {
+    tray.on('right-click', toggleTrayWindow)
+    createTrayWindow()
+  }
 }
 
 function hideToTray() {
@@ -416,12 +424,13 @@ function sendTrayCommand(command: TrayCommand) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    title: 'BiliMusic',
     width: 1280,
     height: 800,
     minWidth: 1024,
     minHeight: 640,
     frame: false,
-    titleBarStyle: 'hidden',
+    ...(!isHarmonyOS ? { titleBarStyle: 'hidden' as const } : {}),
     backgroundColor: '#F6F7F9',
     icon: loadAppIcon(),
     webPreferences: {
@@ -517,8 +526,14 @@ app.whenReady().then(() => {
   setupBiliHeaders()
   registerBiliApiHandlers()
   registerLyricsApiHandlers()
-  createWindow()
-  createTray()
+  if (isHarmonyOS) {
+    // OpenHarmony 上窗口显示/隐藏与托盘强相关，需先创建托盘再创建主窗口。
+    createTray()
+    createWindow()
+  } else {
+    createWindow()
+    createTray()
+  }
 })
 
 app.on('window-all-closed', () => {
