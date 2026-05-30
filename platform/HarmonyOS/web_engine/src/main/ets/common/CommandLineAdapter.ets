@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import LogUtil from '../utils/LogUtil';
+import { deviceInfo } from '@kit.BasicServicesKit';
 
 const TAG = 'CommandLineAdapter';
 
@@ -131,6 +132,22 @@ export class CommandLineAdapter {
       "--disable-gpu-watchdog",
       "--disable-features=EnableDrDc",
     ];
+    if (deviceInfo.deviceType === 'tablet') {
+      vec_args.push(
+        "--no-sandbox",
+        "--disable-seccomp-filter-sandbox",
+        "--disable-gpu-sandbox",
+        "--disable-setuid-sandbox",
+        "--js-flags=--jitless",
+      );
+      const disableFeatures = "--disable-features=";
+      const index = vec_args.findIndex((arg) => arg.startsWith(disableFeatures));
+      if (index >= 0) {
+        vec_args[index] = `${vec_args[index]},WebAssembly`;
+      } else {
+        vec_args.push(`${disableFeatures}WebAssembly`);
+      }
+    }
     return vec_args;
   }
 }
