@@ -433,6 +433,12 @@ export class AppWindowAdapter extends BaseAdapter {
 
   @LogMethod
   setTitle(id: number, title: string) {
+    if (title.startsWith('__BILIMUSIC_WINDOW_BUTTONS__:')) {
+      let visible = title.endsWith(':show');
+      let proxy = this.abilityManager.getProxy(id);
+      proxy?.getWindow()?.setWindowTitleButtonVisible(visible, visible, visible);
+      return;
+    }
     let proxy = this.abilityManager.getProxy(id);
     proxy?.setWindowTitle(title);
   }

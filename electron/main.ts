@@ -501,15 +501,13 @@ ipcMain.on('window:toggle-fullscreen', () => {
 ipcMain.on('window:set-button-visibility', (_event, visible: boolean) => {
   if (!isHarmonyOS) return
   const next = Boolean(visible)
-  mainWindow?.setMaximizable(next)
-  mainWindow?.setMinimizable(next)
-  mainWindow?.setClosable(next)
   const setWindowButtonVisibility = (mainWindow as unknown as {
     setWindowButtonVisibility?: (visible: boolean) => void
   } | null)?.setWindowButtonVisibility
   if (typeof setWindowButtonVisibility === 'function') {
     setWindowButtonVisibility.call(mainWindow, next)
   }
+  mainWindow?.setTitle(`__BILIMUSIC_WINDOW_BUTTONS__:${next ? 'show' : 'hide'}`)
 })
 ipcMain.handle('window:isFullscreen', () => Boolean(mainWindow?.isFullScreen()))
 ipcMain.on('tray:player-state', (_event, state: TrayPlayerState) => {
