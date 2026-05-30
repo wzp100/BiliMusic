@@ -514,7 +514,7 @@ body {
   margin-bottom: 12px;
 }
 
-.add-playlist-track > div {
+.add-playlist-track>div {
   width: 44px;
   height: 44px;
   display: grid;
@@ -597,7 +597,7 @@ body {
   font-size: 12px;
 }
 
-.add-playlist-list button > svg {
+.add-playlist-list button>svg {
   color: #30d158;
   flex: 0 0 auto;
 }
@@ -659,10 +659,13 @@ body {
 /* ===== Animation Utilities ===== */
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -1340,7 +1343,7 @@ body {
 }
 
 .apple-search-empty__icon,
-.apple-search-state > div {
+.apple-search-state>div {
   width: 86px;
   height: 86px;
   display: grid;
@@ -1458,12 +1461,22 @@ body {
 }
 
 @keyframes search-sheen {
-  0%, 52%, 100% { transform: translateX(-40%); }
-  68% { transform: translateX(36%); }
+
+  0%,
+  52%,
+  100% {
+    transform: translateX(-40%);
+  }
+
+  68% {
+    transform: translateX(36%);
+  }
 }
 
 @keyframes skeleton-shimmer {
-  100% { transform: translateX(100%); }
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 @media (max-width: 720px) {
@@ -1993,7 +2006,7 @@ body {
   font-size: 12px;
 }
 
-.lyrics-candidate > span:last-child {
+.lyrics-candidate>span:last-child {
   flex: 0 0 auto;
   color: #ff6b8e;
   font-size: 12px;
@@ -2133,7 +2146,7 @@ body {
   text-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
 }
 
-.am-hero__content > span {
+.am-hero__content>span {
   display: block;
   max-width: 520px;
   color: rgba(255, 255, 255, 0.72);
@@ -2326,7 +2339,7 @@ body {
   padding: 13px 14px;
 }
 
-.am-feature-card__body > div:first-child {
+.am-feature-card__body>div:first-child {
   min-width: 0;
   flex: 1;
 }
@@ -2451,7 +2464,7 @@ body {
   transform: scale(1.08);
 }
 
-.am-track-row__cover > span {
+.am-track-row__cover>span {
   position: absolute;
   inset: 0;
   display: grid;
@@ -2462,7 +2475,7 @@ body {
   transition: opacity var(--duration-normal);
 }
 
-.am-track-row:hover .am-track-row__cover > span {
+.am-track-row:hover .am-track-row__cover>span {
   opacity: 1;
 }
 
@@ -2529,7 +2542,7 @@ body {
   -webkit-backdrop-filter: blur(var(--glass-blur));
 }
 
-.am-empty > div {
+.am-empty>div {
   width: 84px;
   height: 84px;
   display: grid;
@@ -2632,7 +2645,7 @@ body {
   transform: translateX(-16px) scale(1.08);
 }
 
-.download-metric > span {
+.download-metric>span {
   position: relative;
   z-index: 1;
   width: 42px;
@@ -2980,7 +2993,7 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 9px;
-  padding: 0 16px 16px;
+  padding: 16px 16px 16px;
 }
 
 .settings-actions--stacked {
@@ -3099,7 +3112,7 @@ body {
   padding: 0 3px;
 }
 
-.playlist-editbar > div {
+.playlist-editbar>div {
   flex: 1;
   min-width: 0;
 }
@@ -3199,13 +3212,25 @@ body {
 }
 
 @keyframes am-hero-float {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(24px, 18px, 0) scale(1.08); }
+
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  50% {
+    transform: translate3d(24px, 18px, 0) scale(1.08);
+  }
 }
 
 @keyframes am-eq {
-  0% { transform: scaleY(0.36); }
-  100% { transform: scaleY(1); }
+  0% {
+    transform: scaleY(0.36);
+  }
+
+  100% {
+    transform: scaleY(1);
+  }
 }
 
 @media (max-width: 980px) {
