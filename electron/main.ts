@@ -500,11 +500,15 @@ ipcMain.on('window:toggle-fullscreen', () => {
 })
 ipcMain.on('window:set-button-visibility', (_event, visible: boolean) => {
   if (!isHarmonyOS) return
+  const next = Boolean(visible)
+  mainWindow?.setMaximizable(next)
+  mainWindow?.setMinimizable(next)
+  mainWindow?.setClosable(next)
   const setWindowButtonVisibility = (mainWindow as unknown as {
     setWindowButtonVisibility?: (visible: boolean) => void
   } | null)?.setWindowButtonVisibility
   if (typeof setWindowButtonVisibility === 'function') {
-    setWindowButtonVisibility.call(mainWindow, Boolean(visible))
+    setWindowButtonVisibility.call(mainWindow, next)
   }
 })
 ipcMain.handle('window:isFullscreen', () => Boolean(mainWindow?.isFullScreen()))
