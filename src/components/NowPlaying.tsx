@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import {
   ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat,
-  Heart, Volume2, VolumeX, Search, Music, Loader2, Maximize2, Minimize2, X, MessageCircle, ExternalLink,
+  Heart, Volume2, VolumeX, Search, Music, Loader2, Maximize2, Minimize2, X, MessageCircle, ExternalLink, ThumbsUp, RefreshCw,
 } from 'lucide-react'
 import { usePlayer, usePlayerProgress } from '@/contexts/PlayerContext'
 import { useNowPlaying } from '@/contexts/NowPlayingContext'
@@ -12,6 +12,7 @@ import { useLyrics } from '@/hooks/useLyrics'
 import PlayerSlider from '@/components/PlayerSlider'
 import LyricsView from '@/components/LyricsView'
 import type { LyricCandidate } from '@/services/lyrics'
+import { getVideoComments, type VideoComment } from '@/services/api'
 
 const sliderTheme = {
   ['--track-bg']: 'rgba(255,255,255,0.18)',
@@ -21,6 +22,7 @@ const sliderTheme = {
 
 const spring = { type: 'spring', stiffness: 360, damping: 32, mass: 0.75 } as const
 const noDrag = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
+const commentPageSize = 20
 
 export default function NowPlaying() {
   const navigate = useNavigate()
@@ -33,6 +35,13 @@ export default function NowPlaying() {
   const duration = liveDuration || track?.duration || 0
   const [fullscreen, setFullscreen] = useState(false)
   const [controlsVisible, setControlsVisible] = useState(true)
+  const [commentsOpen, setCommentsOpen] = useState(false)
+  const [commentsStatus, setCommentsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [comments, setComments] = useState<VideoComment[]>([])
+  const [commentsPage, setCommentsPage] = useState(1)
+  const [commentsTotal, setCommentsTotal] = useState(0)
+  const [commentsError, setCommentsError] = useState('')
+  const [commentsLoadingMore, setCommentsLoadingMore] = useState(false)
 
   useEffect(() => {
     if (!expanded) return
@@ -77,14 +86,41 @@ export default function NowPlaying() {
     navigate('/search', { state: { openArtist: track.artist } })
   }
 
-  const openComments = () => {
-    if (!track?.bvid) return
-    window.electronAPI?.openExternal?.(`https://www.bilibili.com/video/${track.bvid}#reply`)
-  }
-
   const openSourceVideo = () => {
     if (!track?.bvid) return
     window.electronAPI?.openExternal?.(`https://www.bilibili.com/video/${track.bvid}`)
+  }
+
+  const loadComments = useCallback(async (page = 1) => {
+    if (!track?.bvid && !track?.aid) return
+    if (page === 1) {
+      setCommentsStatus('loading')
+      setCommentsError('')
+    } else {
+      setCommentsLoadingMore(true)
+    }
+
+    try {
+      const data = await getVideoComments({ bvid: track.bvid, aid: track.aid }, page, commentPageSize)
+      setComments((prev) => page === 1 ? data.items : [...prev, ...data.items])
+      setCommentsTotal(data.total)
+      setCommentsPage(page)
+      setCommentsStatus('ready')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '评论加载失败'
+      setCommentsError(message)
+      setCommentsStatus('error')
+    } finally {
+      setCommentsLoadingMore(false)
+    }
+  }, [track?.aid, track?.bvid])
+
+  const toggleComments = () => {
+    const nextOpen = !commentsOpen
+    setCommentsOpen(nextOpen)
+    if (nextOpen && commentsStatus === 'idle') {
+      void loadComments(1)
+    }
   }
 
   useEffect(() => {
@@ -108,6 +144,16 @@ export default function NowPlaying() {
       events.forEach(event => window.removeEventListener(event, revealControls))
     }
   }, [expanded, fullscreen])
+
+  useEffect(() => {
+    setCommentsOpen(false)
+    setCommentsStatus('idle')
+    setComments([])
+    setCommentsPage(1)
+    setCommentsTotal(0)
+    setCommentsError('')
+    setCommentsLoadingMore(false)
+  }, [track?.id])
 
   return (
     <AnimatePresence>
@@ -318,7 +364,7 @@ export default function NowPlaying() {
                       {player.repeatMode === 'one' && <span>1</span>}
                     </span>
                   </RoundIcon>
-                  <RoundIcon onClick={openComments} title="查看评论">
+                  <RoundIcon active={commentsOpen} onClick={toggleComments} title="查看评论">
                     <MessageCircle size={20} />
                   </RoundIcon>
                 </div>
@@ -342,9 +388,123 @@ export default function NowPlaying() {
               )}
             </motion.section>
           </main>
+
+          <AnimatePresence>
+            {commentsOpen && (
+              <CommentsPanel
+                comments={comments}
+                status={commentsStatus}
+                error={commentsError}
+                total={commentsTotal}
+                hasMore={comments.length > 0 && comments.length < commentsTotal}
+                loadingMore={commentsLoadingMore}
+                onClose={() => setCommentsOpen(false)}
+                onRetry={() => loadComments(1)}
+                onLoadMore={() => loadComments(commentsPage + 1)}
+              />
+            )}
+          </AnimatePresence>
         </motion.div>
       )}
     </AnimatePresence>
+  )
+}
+
+function CommentsPanel({
+  comments,
+  status,
+  error,
+  total,
+  hasMore,
+  loadingMore,
+  onClose,
+  onRetry,
+  onLoadMore,
+}: {
+  comments: VideoComment[]
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  error: string
+  total: number
+  hasMore: boolean
+  loadingMore: boolean
+  onClose: () => void
+  onRetry: () => void
+  onLoadMore: () => void
+}) {
+  return (
+    <motion.aside
+      className="now-playing-comments"
+      initial={{ opacity: 0, x: 42, scale: 0.985 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={{ opacity: 0, x: 42, scale: 0.985 }}
+      transition={spring}
+    >
+      <div className="now-playing-comments__head">
+        <div>
+          <span>评论</span>
+          <small>{total > 0 ? `${formatCount(total)} 条` : 'Bilibili'}</small>
+        </div>
+        <button type="button" onClick={onClose} title="关闭评论">
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="now-playing-comments__body">
+        {status === 'loading' && (
+          <Centered>
+            <Loader2 size={28} className="spin" />
+            <span>正在加载评论...</span>
+          </Centered>
+        )}
+
+        {status === 'error' && (
+          <Centered>
+            <MessageCircle size={42} strokeWidth={1.25} />
+            <strong>评论加载失败</strong>
+            <span>{error || '稍后再试一次'}</span>
+            <button type="button" onClick={onRetry}><RefreshCw size={14} /> 重新加载</button>
+          </Centered>
+        )}
+
+        {status === 'ready' && comments.length === 0 && (
+          <Centered>
+            <MessageCircle size={42} strokeWidth={1.25} />
+            <strong>暂无评论</strong>
+            <span>这个视频下还没有可展示的评论</span>
+          </Centered>
+        )}
+
+        {status === 'ready' && comments.length > 0 && (
+          <div className="now-playing-comments__list">
+            {comments.map((comment) => (
+              <article key={comment.id} className="now-playing-comment">
+                {comment.avatar
+                  ? <img src={comment.avatar} alt="" />
+                  : <div className="now-playing-comment__avatar">{comment.author.slice(0, 1).toUpperCase()}</div>}
+                <div className="now-playing-comment__content">
+                  <div className="now-playing-comment__meta">
+                    <strong>{comment.author}</strong>
+                    <span>{formatCommentTime(comment.createdAt)}</span>
+                  </div>
+                  <p>{comment.message}</p>
+                  <div className="now-playing-comment__stats">
+                    <span><ThumbsUp size={13} />{formatCount(comment.like)}</span>
+                    {comment.replyCount > 0 && <span>{formatCount(comment.replyCount)} 条回复</span>}
+                  </div>
+                </div>
+              </article>
+            ))}
+
+            {hasMore && (
+              <button type="button" className="now-playing-comments__more" onClick={onLoadMore} disabled={loadingMore}>
+                {loadingMore ? <Loader2 size={15} className="spin" /> : <MessageCircle size={15} />}
+                {loadingMore ? '加载中...' : '加载更多评论'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </motion.aside>
   )
 }
 
@@ -474,6 +634,26 @@ function RoundIcon({ children, active, onClick, title }: { children: ReactNode; 
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="lyrics-centered">{children}</div>
+}
+
+function formatCount(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0'
+  if (n >= 10000) return `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)}万`
+  return n.toString()
+}
+
+function formatCommentTime(seconds: number): string {
+  if (!seconds) return ''
+  const date = new Date(seconds * 1000)
+  const now = Date.now()
+  const diff = Math.max(0, now - date.getTime())
+  const minute = 60 * 1000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (diff < hour) return `${Math.max(1, Math.floor(diff / minute))}分钟前`
+  if (diff < day) return `${Math.floor(diff / hour)}小时前`
+  if (diff < 7 * day) return `${Math.floor(diff / day)}天前`
+  return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
 }
 
 function formatTime(seconds: number): string {

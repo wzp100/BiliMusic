@@ -349,6 +349,55 @@ export async function getVideoDetail(bvid: string): Promise<VideoDetail> {
   return biliFetch('/x/web-interface/view', { params: { bvid } })
 }
 
+// ===== 评论 =====
+
+export interface ReplyMember {
+  mid: string
+  uname: string
+  avatar: string
+}
+
+export interface ReplyContent {
+  message: string
+}
+
+export interface ReplyItem {
+  rpid: number
+  ctime: number
+  like: number
+  rcount: number
+  member: ReplyMember
+  content: ReplyContent
+}
+
+export interface ReplyPage {
+  num: number
+  size: number
+  count: number
+  acount: number
+}
+
+export interface ReplyResponse {
+  page?: ReplyPage
+  replies?: ReplyItem[] | null
+}
+
+export async function getVideoComments(
+  oid: number,
+  page = 1,
+  pageSize = 20,
+): Promise<ReplyResponse> {
+  return biliFetch('/x/v2/reply', {
+    params: {
+      type: 1,
+      oid,
+      pn: page,
+      ps: pageSize,
+      sort: 2,
+    },
+  })
+}
+
 // ===== 音频流 =====
 
 export interface AudioStream {

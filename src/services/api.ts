@@ -112,6 +112,59 @@ export async function getVideoDetail(bvid: string): Promise<VideoInfo> {
   }
 }
 
+// ===== 评论 =====
+
+export interface VideoComment {
+  id: number
+  author: string
+  avatar: string
+  message: string
+  like: number
+  replyCount: number
+  createdAt: number
+}
+
+export async function getVideoComments(
+  target: { bvid?: string; aid?: string | number },
+  page = 1,
+  pageSize = 20,
+): Promise<{ items: VideoComment[]; total: number }> {
+  const { getVideoDetail: rendererDetail, getVideoComments: rendererComments } = await import('@/services/bilibiliApi')
+  let oid = 0
+
+  if (target.bvid) {
+    try {
+      const detail = await rendererDetail(target.bvid)
+      oid = Number(detail.aid) || 0
+    } catch {
+      oid = 0
+    }
+  }
+
+  if (!oid) {
+    oid = Number(target.aid) || 0
+  }
+
+  if (!oid) {
+    throw new Error('无法获取当前视频的评论区 ID')
+  }
+
+  const data = await rendererComments(oid, page, pageSize)
+  const replies = data.replies || []
+  return {
+    items: replies.map((reply) => ({
+      id: reply.rpid,
+      author: reply.member?.uname || 'Bilibili 用户',
+      avatar: normalizePic(reply.member?.avatar || ''),
+      message: reply.content?.message || '',
+      like: reply.like || 0,
+      replyCount: reply.rcount || 0,
+      createdAt: reply.ctime || 0,
+    })),
+    total: data.page?.count || replies.length,
+  }
+}
+
 // ===== 提取音频 =====
 
 export async function extractAudio(
