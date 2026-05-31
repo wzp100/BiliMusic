@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
+import { useAutoSync } from '@/hooks/useAutoSync'
 import { PlayerProvider } from '@/contexts/PlayerContext'
 import { NowPlayingProvider } from '@/contexts/NowPlayingContext'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
@@ -34,6 +35,9 @@ export default function App() {
   useEffect(() => {
     window.electronAPI?.notifyRendererReady?.()
   }, [])
+
+  // 云同步自动触发（启动 + 改动防抖 + 周期）
+  useAutoSync()
 
   return (
     <AuthProvider>

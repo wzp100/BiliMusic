@@ -2978,6 +2978,57 @@ body {
   border-color: color-mix(in srgb, var(--color-primary) 28%, var(--glass-border));
 }
 
+.settings-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  color: var(--color-foreground);
+  border-color: var(--glass-border);
+}
+
+.settings-actions button.is-primary {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-color: transparent;
+}
+
+.settings-actions button.is-primary:hover {
+  background: var(--color-primary-hover);
+  color: var(--color-on-primary);
+  border-color: transparent;
+}
+
+.settings-actions.is-divided {
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+}
+
+/* 云同步输入框：与 settings-select 同款药丸，置于 settings-row 控制区 */
+.settings-input {
+  width: 300px;
+  max-width: 52vw;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-heavy);
+  color: var(--color-foreground);
+  font: 600 12px/1 var(--font-body);
+  outline: 0;
+  transition:
+    border-color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease;
+}
+
+.settings-input::placeholder {
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+.settings-input:focus {
+  border-color: color-mix(in srgb, var(--color-primary) 52%, var(--glass-border));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+
 .settings-account {
   display: flex;
   align-items: center;

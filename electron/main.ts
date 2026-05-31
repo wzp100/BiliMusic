@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import { registerBiliApiHandlers } from './biliApi'
 import { registerLyricsApiHandlers } from './lyricsApi'
 import { initUpdates, getActiveRendererRoot } from './updater'
+import { registerWebdavHandlers } from './webdav'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -572,16 +573,23 @@ ipcMain.handle('shell:open-external', (_event, url: string) => {
 app.whenReady().then(() => {
   // 生产环境注册 app:// 协议，映射到打包后的 dist 目录（asar 内 file:// 读取透明支持）
   if (!process.env.VITE_DEV_SERVER_URL) {
-    protocol.handle('app', (request) => {
+    protocol.handle('app', async (request) => {
       const { pathname } = new URL(request.url)
       // 渲染层根目录可能是包内 dist 或已生效的 OTA asar（net.fetch 透明读 asar 内部）
       const filePath = path.join(getActiveRendererRoot(), decodeURIComponent(pathname))
-      return net.fetch(pathToFileURL(filePath).toString())
+      try {
+        return await net.fetch(pathToFileURL(filePath).toString())
+      } catch (err) {
+        // 关键诊断：鸿蒙上若读沙箱 asar 失败会在此命中（filePath 含 .asar）
+        console.log('[BiliMusic-OTA] app:// fetch FAILED:', filePath, '—', err instanceof Error ? err.message : String(err))
+        throw err
+      }
     })
   }
   setupBiliHeaders()
   registerBiliApiHandlers()
   registerLyricsApiHandlers()
+  registerWebdavHandlers()
   // 更新模块须在创建窗口前初始化：bootReconcile 先定下生效的渲染层根目录，供 app:// 加载
   initUpdates({
     window: () => mainWindow,

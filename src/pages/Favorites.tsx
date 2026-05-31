@@ -1,8 +1,8 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Heart, Play, X } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import AddToPlaylistButton from '@/components/AddToPlaylistButton'
-import { loadFavoriteTracks, saveFavoriteTracks } from '@/utils/storage'
+import { loadFavoriteTracks, removeFavoriteTrack, FAVORITES_CHANGED_EVENT } from '@/utils/storage'
 import {
   ActionButton,
   EmptyLibrary,
@@ -19,11 +19,15 @@ export default function Favorites() {
   const [tracks, setTracks] = useState<Track[]>(() => loadFavoriteTracks())
   const player = usePlayer()
 
+  useEffect(() => {
+    const refresh = () => setTracks(loadFavoriteTracks())
+    window.addEventListener(FAVORITES_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(FAVORITES_CHANGED_EVENT, refresh)
+  }, [])
+
   const handleRemove = useCallback((trackId: string) => {
-    const updated = tracks.filter(t => t.id !== trackId)
-    saveFavoriteTracks(updated)
-    setTracks(updated)
-  }, [tracks])
+    setTracks(removeFavoriteTrack(trackId)) // 记墓碑，确保同步不复活
+  }, [])
 
   const handlePlayAll = useCallback(() => {
     if (tracks.length > 0) player.playAll(tracks)

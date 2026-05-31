@@ -22,3 +22,8 @@ export function setUpdaterWindow(fn: () => BrowserWindow | null): void {
 export function emitUpdater(event: UpdaterEvent): void {
   getWindow()?.webContents.send('updater:event', event)
 }
+
+// 诊断日志：桌面进终端/DevTools，鸿蒙进 hilog（可用 keyword "BiliMusic-OTA" 过滤）
+export function ulog(...args: unknown[]): void {
+  console.log('[BiliMusic-OTA]', ...args)
+}

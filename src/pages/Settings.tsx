@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  Cloud,
+  CloudDownload,
+  CloudUpload,
   FileDown,
   FileUp,
   Download,
@@ -22,6 +25,7 @@ import { useTheme } from '@/hooks/useTheme'
 import { useAppSettings } from '@/hooks/useAppSettings'
 import { useAuth } from '@/contexts/AuthContext'
 import { createPlaylistsExport, importPlaylistsFromText } from '@/utils/storage'
+import { runSync, forceUpload, forceDownload, getLastSync, SYNC_STATE_EVENT, WEBDAV_CONFIGURED_EVENT, type SyncResult } from '@/utils/sync'
 import type { AppSettings, SidebarState, ThemeMode } from '@/types'
 
 export default function Settings() {
@@ -72,6 +76,61 @@ export default function Settings() {
   const runUpdateAction = () => {
     if (updateAction === 'restart') window.electronAPI?.quitAndInstall?.()
     else if (updateAction === 'reload') window.electronAPI?.applyRendererUpdate?.()
+  }
+
+  // ===== 云同步（WebDAV）=====
+  const [davUrl, setDavUrl] = useState('')
+  const [davUser, setDavUser] = useState('')
+  const [davPass, setDavPass] = useState('')
+  const [davConfigured, setDavConfigured] = useState(false)
+  const [syncMessage, setSyncMessage] = useState('')
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [lastSync, setLastSync] = useState(getLastSync())
+
+  useEffect(() => {
+    window.electronAPI?.getWebdavConfig?.().then((c) => {
+      if (c?.configured) {
+        setDavUrl(c.url)
+        setDavUser(c.username)
+        setDavConfigured(true)
+      }
+    })
+    const onSyncState = () => setLastSync(getLastSync())
+    window.addEventListener(SYNC_STATE_EVENT, onSyncState)
+    return () => window.removeEventListener(SYNC_STATE_EVENT, onSyncState)
+  }, [])
+
+  const persistWebdav = async (): Promise<boolean> => {
+    if (!davUrl.trim() || !davUser.trim()) {
+      setSyncMessage('请填写 WebDAV 地址和账号')
+      return false
+    }
+    // 密码留空表示沿用已保存的密码（主进程处理）
+    await window.electronAPI?.configureWebdav?.({ url: davUrl.trim(), username: davUser.trim(), password: davPass })
+    setDavConfigured(true)
+    setDavPass('')
+    window.dispatchEvent(new CustomEvent(WEBDAV_CONFIGURED_EVENT)) // 通知 useAutoSync 启用
+    return true
+  }
+  const handleSaveWebdav = async () => {
+    if (await persistWebdav()) setSyncMessage('配置已保存')
+  }
+  const handleTestWebdav = async () => {
+    if (!(await persistWebdav())) return
+    setSyncMessage('正在测试连接…')
+    const r = await window.electronAPI?.testWebdav?.()
+    setSyncMessage(r?.message || '测试失败')
+  }
+  const runSyncTask = async (task: () => Promise<SyncResult>, busyText: string) => {
+    if (!davConfigured) {
+      setSyncMessage('请先配置并保存 WebDAV')
+      return
+    }
+    setSyncBusy(true)
+    setSyncMessage(busyText)
+    const r = await task()
+    setSyncMessage(r.message)
+    setSyncBusy(false)
   }
 
   const changeDownloadDir = () => {
@@ -189,8 +248,65 @@ export default function Settings() {
             </SettingsRow>
           </SettingsGroup>
 
-          <SettingsGroup title="歌单数据" icon={<FileDown size={20} />}>
-            <div className="settings-actions settings-actions--stacked">
+          <SettingsGroup title="歌单云同步" icon={<Cloud size={20} />}>
+            <SettingsRow label="WebDAV 地址">
+              <input
+                className="settings-input"
+                type="url"
+                value={davUrl}
+                onChange={(e) => setDavUrl(e.target.value)}
+                placeholder="https://dav.jianguoyun.com/dav/"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </SettingsRow>
+            <SettingsRow label="账号">
+              <input
+                className="settings-input"
+                type="text"
+                value={davUser}
+                onChange={(e) => setDavUser(e.target.value)}
+                placeholder="WebDAV 账号"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </SettingsRow>
+            <SettingsRow label="密码" description="坚果云等建议使用应用专用密码">
+              <input
+                className="settings-input"
+                type="password"
+                value={davPass}
+                onChange={(e) => setDavPass(e.target.value)}
+                placeholder={davConfigured ? '已保存（修改请重新输入）' : '应用专用密码'}
+                autoComplete="off"
+              />
+            </SettingsRow>
+            <div className="settings-actions">
+              <button type="button" onClick={handleTestWebdav}>
+                <RefreshCw size={14} />
+                测试连接
+              </button>
+              <button type="button" onClick={handleSaveWebdav}>
+                保存配置
+              </button>
+            </div>
+            <div className="settings-actions is-divided">
+              <button type="button" className="is-primary" onClick={() => runSyncTask(runSync, '正在同步…')} disabled={!davConfigured || syncBusy}>
+                <RefreshCw size={14} />
+                立即同步
+              </button>
+              <button type="button" onClick={() => runSyncTask(forceUpload, '正在上传…')} disabled={!davConfigured || syncBusy}>
+                <CloudUpload size={14} />
+                上传到云端
+              </button>
+              <button type="button" onClick={() => runSyncTask(forceDownload, '正在下载…')} disabled={!davConfigured || syncBusy}>
+                <CloudDownload size={14} />
+                从云端下载
+              </button>
+              {syncMessage && <span>{syncMessage}</span>}
+              {lastSync && <span>上次同步：{new Date(lastSync).toLocaleString()}</span>}
+            </div>
+            <div className="settings-actions is-divided">
               <button type="button" onClick={exportPlaylists}>
                 <FileDown size={14} />
                 导出歌单

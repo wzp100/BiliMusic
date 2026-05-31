@@ -92,6 +92,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('updater:event', listener)
     return () => ipcRenderer.removeListener('updater:event', listener)
   },
+  configureWebdav: (cfg) => ipcRenderer.invoke('webdav:configure', cfg),
+  getWebdavConfig: () => ipcRenderer.invoke('webdav:get-config'),
+  testWebdav: () => ipcRenderer.invoke('webdav:test'),
+  webdavGet: (relPath) => ipcRenderer.invoke('webdav:get', relPath),
+  webdavPut: (relPath, content, etag) => ipcRenderer.invoke('webdav:put', relPath, content, etag),
+  clearWebdav: () => ipcRenderer.invoke('webdav:clear'),
   platform: process.platform,
   biliApi,
   lyricsApi,

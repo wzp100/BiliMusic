@@ -78,6 +78,24 @@ export interface TrayPlayerState {
 
 export type TrayPlayerCommand = 'toggle-play' | 'next' | 'prev'
 
+export interface WebdavConfigInput {
+  url: string
+  username: string
+  password: string
+}
+export interface WebdavConfigInfo {
+  url: string
+  username: string
+  configured: boolean
+}
+export interface WebdavResult {
+  ok: boolean
+  status: number
+  etag: string | null
+  content: string | null
+  message?: string
+}
+
 // 统一更新事件（整包 electron-updater + 渲染热补丁共用此通道）
 export type UpdaterEvent =
   | { type: 'checking' }
@@ -112,6 +130,12 @@ declare global {
       applyRendererUpdate?: () => void
       notifyRendererReady?: () => void
       onUpdaterEvent?: (callback: (event: UpdaterEvent) => void) => () => void
+      configureWebdav?: (cfg: WebdavConfigInput) => Promise<{ ok: boolean }>
+      getWebdavConfig?: () => Promise<WebdavConfigInfo>
+      testWebdav?: () => Promise<{ ok: boolean; message: string }>
+      webdavGet?: (relPath: string) => Promise<WebdavResult>
+      webdavPut?: (relPath: string, content: string, etag?: string) => Promise<WebdavResult>
+      clearWebdav?: () => Promise<{ ok: boolean }>
       platform: string
       biliApi: BiliApi
       lyricsApi: LyricsApi

@@ -1,10 +1,13 @@
-import type { AppSettings, Playlist, Track } from '@/types'
+import type { AppSettings, Playlist, Tombstone, Track } from '@/types'
 
 const RECENT_KEY = 'bilimusic_recent'
 const FAVORITES_KEY = 'bilimusic_favorites'
 const PLAYLISTS_KEY = 'bilimusic_playlists'
+const PLAYLIST_TOMBSTONES_KEY = 'bilimusic_playlists_deleted'
+const FAVORITE_TOMBSTONES_KEY = 'bilimusic_favorites_deleted'
 const SETTINGS_KEY = 'bilimusic_settings'
 export const PLAYLISTS_CHANGED_EVENT = 'bilimusic:playlists-changed'
+export const FAVORITES_CHANGED_EVENT = 'bilimusic:favorites-changed'
 export const SETTINGS_CHANGED_EVENT = 'bilimusic:settings-changed'
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -49,6 +52,7 @@ export function loadFavoriteTracks(): Track[] {
 export function saveFavoriteTracks(tracks: Track[]) {
   try {
     localStorage.setItem(FAVORITES_KEY, JSON.stringify(tracks))
+    window.dispatchEvent(new CustomEvent(FAVORITES_CHANGED_EVENT))
   } catch { /* ignore */ }
 }
 
@@ -57,9 +61,19 @@ export function toggleFavoriteTrack(track: Track): Track[] {
   const idx = favs.findIndex(t => t.id === track.id)
   if (idx >= 0) {
     favs.splice(idx, 1)
+    addTombstone(FAVORITE_TOMBSTONES_KEY, track.id) // 取消收藏 → 记墓碑
   } else {
-    favs.unshift({ ...track, isLiked: true })
+    favs.unshift({ ...track, isLiked: true, likedAt: new Date().toISOString() })
+    removeTombstone(FAVORITE_TOMBSTONES_KEY, track.id) // 重新收藏 → 清墓碑
   }
+  saveFavoriteTracks(favs)
+  return favs
+}
+
+// 从收藏移除并记墓碑（供收藏页删除使用，确保同步不复活）
+export function removeFavoriteTrack(id: string): Track[] {
+  const favs = loadFavoriteTracks().filter(t => t.id !== id)
+  addTombstone(FAVORITE_TOMBSTONES_KEY, id)
   saveFavoriteTracks(favs)
   return favs
 }
@@ -73,6 +87,43 @@ function createId(): string {
     return crypto.randomUUID()
   }
   return `playlist_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+}
+
+// ===== 删除墓碑（云同步用）=====
+function loadTombstones(key: string): Tombstone[] {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+function saveTombstones(key: string, list: Tombstone[]): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(list))
+  } catch {
+    /* ignore */
+  }
+}
+function addTombstone(key: string, id: string): void {
+  const list = loadTombstones(key).filter((t) => t.id !== id)
+  list.push({ id, deletedAt: new Date().toISOString() })
+  saveTombstones(key, list)
+}
+function removeTombstone(key: string, id: string): void {
+  saveTombstones(key, loadTombstones(key).filter((t) => t.id !== id))
+}
+export function loadPlaylistTombstones(): Tombstone[] {
+  return loadTombstones(PLAYLIST_TOMBSTONES_KEY)
+}
+export function savePlaylistTombstones(list: Tombstone[]): void {
+  saveTombstones(PLAYLIST_TOMBSTONES_KEY, list)
+}
+export function loadFavoriteTombstones(): Tombstone[] {
+  return loadTombstones(FAVORITE_TOMBSTONES_KEY)
+}
+export function saveFavoriteTombstones(list: Tombstone[]): void {
+  saveTombstones(FAVORITE_TOMBSTONES_KEY, list)
 }
 
 export function loadPlaylists(): Playlist[] {
@@ -118,6 +169,7 @@ export function updatePlaylist(updated: Playlist): void {
 }
 
 export function deletePlaylist(id: string): void {
+  addTombstone(PLAYLIST_TOMBSTONES_KEY, id) // 记墓碑，避免同步后被对端复活
   savePlaylists(loadPlaylists().filter(p => p.id !== id))
 }
 
