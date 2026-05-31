@@ -32,6 +32,7 @@ export default function NowPlaying() {
   const lyrics = useLyrics(track, expanded && settings.showLyrics)
   const duration = liveDuration || track?.duration || 0
   const [fullscreen, setFullscreen] = useState(false)
+  const [controlsVisible, setControlsVisible] = useState(true)
 
   useEffect(() => {
     if (!expanded) return
@@ -76,17 +77,44 @@ export default function NowPlaying() {
     navigate('/search', { state: { openArtist: track.artist } })
   }
 
+  useEffect(() => {
+    if (!expanded || !fullscreen) {
+      setControlsVisible(true)
+      return
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const revealControls = () => {
+      setControlsVisible(true)
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => setControlsVisible(false), 5000)
+    }
+
+    revealControls()
+    const events: (keyof WindowEventMap)[] = ['mousemove', 'mousedown', 'wheel', 'keydown', 'touchstart', 'touchmove']
+    events.forEach(event => window.addEventListener(event, revealControls, { passive: true }))
+    return () => {
+      if (timer) clearTimeout(timer)
+      events.forEach(event => window.removeEventListener(event, revealControls))
+    }
+  }, [expanded, fullscreen])
+
   return (
     <AnimatePresence>
       {expanded && track && (
         <motion.div
           key="now-playing"
-          className="now-playing"
+          className={`now-playing ${fullscreen ? 'is-fullscreen' : ''} ${fullscreen && !controlsVisible ? 'is-immersive-idle' : ''}`}
           initial={{ opacity: 0, scale: 1.015 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.985 }}
           transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
         >
+          <div className="now-playing-smoke" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
           <div className="now-playing-bg">
             {track.coverUrl && (
               <>
@@ -107,7 +135,7 @@ export default function NowPlaying() {
             )}
           </div>
 
-          <header className="now-playing-top" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <header className="now-playing-top now-playing-ui now-playing-ui--top" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
             <motion.button
               type="button"
               className="now-playing-close"
@@ -184,7 +212,7 @@ export default function NowPlaying() {
                 </div>
                 <motion.button
                   type="button"
-                  className={`now-playing-heart ${track.isLiked ? 'is-liked' : ''}`}
+                  className={`now-playing-heart now-playing-ui ${track.isLiked ? 'is-liked' : ''}`}
                   onClick={() => player.toggleLike(track.id)}
                   whileHover={{ scale: 1.08 }}
                   whileTap={{ scale: 0.88 }}
@@ -194,7 +222,7 @@ export default function NowPlaying() {
                 </motion.button>
               </div>
 
-              <div className="now-playing-progress" style={sliderTheme}>
+              <div className="now-playing-progress now-playing-ui" style={sliderTheme}>
                 <PlayerSlider
                   ariaLabel="播放进度"
                   value={progress}
@@ -210,7 +238,7 @@ export default function NowPlaying() {
                 </div>
               </div>
 
-              <div className="now-playing-controls">
+              <div className="now-playing-controls now-playing-ui now-playing-ui--controls">
                 <RoundIcon active={player.isShuffled} onClick={() => player.setIsShuffled(!player.isShuffled)} title="随机播放">
                   <Shuffle size={20} />
                 </RoundIcon>
@@ -247,7 +275,7 @@ export default function NowPlaying() {
                 </RoundIcon>
               </div>
 
-              <div className="now-playing-volume" style={sliderTheme}>
+              <div className="now-playing-volume now-playing-ui" style={sliderTheme}>
                 <button type="button" onClick={() => player.setIsMuted(!player.isMuted)}>
                   {player.isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
                 </button>

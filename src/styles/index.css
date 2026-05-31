@@ -1630,6 +1630,144 @@ body {
   font-family: 'SF Pro Display', '-apple-system', BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
+.now-playing-ui {
+  transition:
+    opacity 900ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 1100ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 1100ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.now-playing.is-fullscreen .now-playing-main {
+  width: min(100%, 1680px);
+  grid-template-columns: minmax(340px, 480px) minmax(0, 1fr);
+}
+
+.now-playing.is-fullscreen .now-playing-bg::after {
+  background:
+    radial-gradient(circle at 28% 22%, rgba(255, 255, 255, 0.18), transparent 26%),
+    radial-gradient(circle at 62% 42%, rgba(255, 55, 95, 0.22), transparent 34%),
+    linear-gradient(110deg, rgba(7, 7, 10, 0.62) 0%, rgba(7, 7, 10, 0.28) 48%, rgba(7, 7, 10, 0.72) 100%);
+  transition: background 1200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.now-playing.is-immersive-idle {
+  cursor: none;
+}
+
+.now-playing.is-immersive-idle .now-playing-ui {
+  opacity: 0;
+  pointer-events: none;
+  filter: blur(18px) saturate(0.9);
+  transform: translate3d(0, 18px, 0) scale(0.985);
+}
+
+.now-playing.is-immersive-idle .now-playing-ui--top {
+  transform: translate3d(0, -22px, 0) scale(0.985);
+}
+
+.now-playing.is-immersive-idle .now-playing-ui--controls {
+  filter: blur(24px) saturate(0.8);
+  transform: translate3d(0, 34px, 0) scale(1.035);
+}
+
+.now-playing.is-immersive-idle .now-playing-left {
+  opacity: 0.96;
+}
+
+.now-playing.is-immersive-idle .now-playing-lyrics-card {
+  opacity: 0.98;
+}
+
+.now-playing-left,
+.now-playing-lyrics-card {
+  transition:
+    transform 1300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.now-playing-smoke {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.now-playing-smoke span {
+  position: absolute;
+  --smoke-start-x: 0;
+  --smoke-end-x: -12vw;
+  --smoke-end-y: -5vh;
+  --smoke-rotate: -7deg;
+  --smoke-end-rotate: -13deg;
+  width: 42vw;
+  height: 28vh;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.105), transparent);
+  filter: blur(34px);
+  opacity: 0;
+  transform: translate3d(var(--smoke-start-x), 0, 0) rotate(var(--smoke-rotate)) scaleX(0.62);
+}
+
+.now-playing-smoke span:nth-child(1) {
+  left: 9vw;
+  top: 9vh;
+}
+
+.now-playing-smoke span:nth-child(2) {
+  right: 5vw;
+  top: 46vh;
+  --smoke-end-x: 12vw;
+  --smoke-end-y: -3vh;
+  --smoke-rotate: 8deg;
+  --smoke-end-rotate: 16deg;
+}
+
+.now-playing-smoke span:nth-child(3) {
+  left: 28vw;
+  bottom: 10vh;
+  width: 52vw;
+  --smoke-end-x: -6vw;
+  --smoke-end-y: -7vh;
+  --smoke-rotate: -3deg;
+  --smoke-end-rotate: -8deg;
+}
+
+.now-playing.is-immersive-idle .now-playing-smoke {
+  opacity: 1;
+}
+
+.now-playing.is-immersive-idle .now-playing-smoke span {
+  animation: smoke-drift 1800ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.now-playing.is-immersive-idle .now-playing-smoke span:nth-child(2) {
+  animation-delay: 90ms;
+}
+
+.now-playing.is-immersive-idle .now-playing-smoke span:nth-child(3) {
+  animation-delay: 180ms;
+}
+
+@keyframes smoke-drift {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--smoke-start-x), 0, 0) rotate(var(--smoke-rotate)) scaleX(0.5) scaleY(0.75);
+  }
+
+  34% {
+    opacity: 0.58;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--smoke-end-x), var(--smoke-end-y), 0) rotate(var(--smoke-end-rotate)) scaleX(1.18) scaleY(1.04);
+  }
+}
+
 .now-playing-bg {
   position: absolute;
   inset: 0;
@@ -1722,6 +1860,14 @@ body {
 .now-playing-cover-wrap {
   position: relative;
   perspective: 1000px;
+  transition:
+    transform 1400ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 1400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.now-playing.is-immersive-idle .now-playing-cover-wrap {
+  filter: saturate(1.08) contrast(1.04);
+  transform: translate3d(0, -8px, 0) scale(1.035);
 }
 
 .now-playing-cover-glow {
@@ -1925,6 +2071,14 @@ body {
   display: flex;
   flex-direction: column;
   padding: 0;
+  transition:
+    transform 1400ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 1400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.now-playing.is-immersive-idle .lyrics-panel {
+  filter: saturate(1.05);
+  transform: translate3d(0, -4px, 0) scale(1.012);
 }
 
 .lyrics-centered button,
