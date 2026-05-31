@@ -1,6 +1,7 @@
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import { ArrowLeft, ChevronRight, Loader2, Music, Play, Search, Sparkles, UserRound, Users, Video, X } from 'lucide-react'
 import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react'
+import { useLocation } from 'react-router-dom'
 import { usePlayer } from '@/contexts/PlayerContext'
 import TrackActions from '@/components/TrackActions'
 import {
@@ -15,6 +16,7 @@ import type { Track } from '@/types'
 
 type SearchType = 'video' | 'user'
 type SelectedUser = { mid: number; name: string; avatar: string }
+type SearchRouteState = { openArtist?: string }
 
 const pageMotion = {
   initial: { opacity: 0, y: 18 },
@@ -89,6 +91,7 @@ function searchItemToTrack(item: SearchItem): Track {
 }
 
 export default function SearchPage() {
+  const location = useLocation()
   const [query, setQuery] = useState('')
   const [searchType, setSearchType] = useState<SearchType>('video')
   const [resultType, setResultType] = useState<SearchType>('video')
@@ -106,6 +109,7 @@ export default function SearchPage() {
   const pageRef = useRef(1)
   const totalPagesRef = useRef(0)
   const currentQueryRef = useRef('')
+  const consumedOpenArtistRef = useRef('')
   const pageRootRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const loadingMoreRef = useRef(false)
@@ -178,6 +182,52 @@ export default function SearchPage() {
       setHasSearched(false)
     }
   }, [searchType, query, executeSearch])
+
+  const openArtistSpace = useCallback(async (artistName: string) => {
+    const normalizedArtist = artistName.trim()
+    if (!normalizedArtist) return
+
+    setQuery(normalizedArtist)
+    setSearchType('user')
+    setResultType('user')
+    setLoading(true)
+    setError(null)
+    setLoadMoreError(null)
+    setReachedEnd(false)
+    setSelectedUser(null)
+    setResults([])
+    setUserResults([])
+    setTotalResults(0)
+    pageRef.current = 1
+    totalPagesRef.current = 0
+    currentQueryRef.current = normalizedArtist
+
+    try {
+      const data = await searchUsers(normalizedArtist, 1)
+      const normalizedLower = normalizedArtist.toLowerCase()
+      const best = data.items.find(user => user.name.trim() === normalizedArtist)
+        || data.items.find(user => user.name.toLowerCase().includes(normalizedLower))
+        || data.items[0]
+
+      setUserResults(data.items)
+      setTotalResults(data.totalResults)
+      totalPagesRef.current = data.totalPages
+      setHasSearched(true)
+      if (best) setSelectedUser({ mid: best.mid, name: best.name, avatar: best.avatar })
+    } catch (e: any) {
+      setError(e.message || '搜索作者失败')
+      setHasSearched(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const artistName = (location.state as SearchRouteState | null)?.openArtist
+    if (!artistName || consumedOpenArtistRef.current === artistName) return
+    consumedOpenArtistRef.current = artistName
+    openArtistSpace(artistName)
+  }, [location.state, openArtistSpace])
 
   const loadMore = useCallback(async () => {
     const loadedCount = resultType === 'video' ? results.length : userResults.length

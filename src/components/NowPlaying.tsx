@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 import {
   ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat,
   Heart, Volume2, VolumeX, Search, Music, Loader2, Maximize2, Minimize2, X,
@@ -22,6 +23,7 @@ const spring = { type: 'spring', stiffness: 360, damping: 32, mass: 0.75 } as co
 const noDrag = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
 
 export default function NowPlaying() {
+  const navigate = useNavigate()
   const player = usePlayer()
   const { progress, duration: liveDuration, setProgress } = usePlayerProgress()
   const { expanded, close } = useNowPlaying()
@@ -66,6 +68,12 @@ export default function NowPlaying() {
 
   const closeToTray = () => {
     window.electronAPI?.close()
+  }
+
+  const openArtistSpace = () => {
+    if (!track?.artist.trim()) return
+    close()
+    navigate('/search', { state: { openArtist: track.artist } })
   }
 
   return (
@@ -163,7 +171,16 @@ export default function NowPlaying() {
               <div className="now-playing-meta">
                 <div className="now-playing-title-block">
                   <motion.h1 layoutId="np-title" transition={spring}>{track.title}</motion.h1>
-                  <motion.p layoutId="np-artist" transition={spring}>{track.artist}</motion.p>
+                  <motion.button
+                    type="button"
+                    className="now-playing-artist-link"
+                    layoutId="np-artist"
+                    transition={spring}
+                    onClick={openArtistSpace}
+                    title={`查看 ${track.artist} 的个人空间`}
+                  >
+                    {track.artist}
+                  </motion.button>
                 </div>
                 <motion.button
                   type="button"

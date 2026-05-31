@@ -1769,7 +1769,8 @@ body {
   white-space: nowrap;
 }
 
-.now-playing-title-block p {
+.now-playing-title-block p,
+.now-playing-artist-link {
   margin-top: 8px;
   color: rgba(255, 255, 255, 0.58);
   font-size: 16px;
@@ -1777,6 +1778,23 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.now-playing-artist-link {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: color var(--duration-fast) ease, transform var(--duration-fast) ease;
+}
+
+.now-playing-artist-link:hover {
+  color: rgba(255, 255, 255, 0.92);
+  transform: translateY(-1px);
 }
 
 .now-playing-heart,
