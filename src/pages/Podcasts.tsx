@@ -13,6 +13,9 @@ import {
   MusicSection,
 } from '@/components/AppleMusicPage'
 
+const PAGE_SIZE = 24
+const MAX_TARGETED_LOAD_PAGES = 6
+
 function dynamicVideoToTrack(video: DynamicVideo): Track {
   return {
     id: `dynamic-${video.bvid}`,
@@ -51,7 +54,7 @@ export default function Podcasts() {
     setError(null)
     setMoreError('')
     try {
-      const page = await getFollowingDynamicVideos(24)
+      const page = await getFollowingDynamicVideos(PAGE_SIZE)
       setVideos(page.videos)
       setHasMore(page.hasMore)
       setOffset(page.offset)
@@ -67,19 +70,30 @@ export default function Podcasts() {
     setLoadingMore(true)
     setMoreError('')
     try {
-      const page = await getFollowingDynamicVideos(24, offset, { preloadAudio: false })
-      setVideos((current) => {
-        const seen = new Set(current.map((video) => video.id || video.bvid))
-        const next = page.videos.filter((video) => {
-          const key = video.id || video.bvid
-          if (seen.has(key)) return false
-          seen.add(key)
-          return true
-        })
-        return [...current, ...next]
-      })
-      setHasMore(page.hasMore)
-      setOffset(page.offset)
+      const targetDateKey = selectedDateKey
+      const shouldChaseDate = targetDateKey !== dateOptions[0].key
+      let nextOffset = offset
+      let nextHasMore = hasMore
+      let loadedPages = 0
+      const loadedVideos: DynamicVideo[] = []
+
+      while (nextHasMore && nextOffset && loadedPages < (shouldChaseDate ? MAX_TARGETED_LOAD_PAGES : 1)) {
+        const page = await getFollowingDynamicVideos(PAGE_SIZE, nextOffset, { preloadAudio: false })
+        loadedPages += 1
+        loadedVideos.push(...page.videos)
+        nextHasMore = page.hasMore
+        nextOffset = page.offset
+
+        if (!shouldChaseDate) break
+        if (page.videos.some((video) => dateKeyForVideo(video) === targetDateKey)) break
+        if (pageHasPassedDate(page.videos, targetDateKey)) break
+      }
+
+      if (loadedVideos.length > 0) {
+        setVideos((current) => mergeUniqueVideos(current, loadedVideos))
+      }
+      setHasMore(nextHasMore)
+      setOffset(nextOffset)
     } catch {
       setMoreError('加载更多动态失败，请稍后再试。')
     } finally {
@@ -208,6 +222,24 @@ function dateKeyForVideo(video: DynamicVideo): string {
   const date = new Date((video.publishedAt || 0) * 1000)
   if (Number.isNaN(date.getTime())) return ''
   return formatDateKey(date)
+}
+
+function mergeUniqueVideos(current: DynamicVideo[], incoming: DynamicVideo[]): DynamicVideo[] {
+  const seen = new Set(current.map((video) => video.id || video.bvid))
+  const next = incoming.filter((video) => {
+    const key = video.id || video.bvid
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  return [...current, ...next]
+}
+
+function pageHasPassedDate(videos: DynamicVideo[], targetDateKey: string): boolean {
+  return videos.some((video) => {
+    const key = dateKeyForVideo(video)
+    return key !== '' && key < targetDateKey
+  })
 }
 
 function formatDateKey(date: Date): string {
