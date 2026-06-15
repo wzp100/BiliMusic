@@ -6,6 +6,7 @@
  */
 
 import type { TrackSource } from '@/services/bilibiliApi'
+import type { Track } from '@/types'
 
 function isElectron(): boolean {
   return !!window.electronAPI?.biliApi
@@ -43,10 +44,22 @@ export interface SearchItem {
 
 function normalizePic(pic: string): string {
   if (!pic) return ''
-  if (pic.startsWith('https://')) return pic
-  if (pic.startsWith('http://')) return pic.replace('http://', 'https://')
-  if (pic.startsWith('//')) return `https:${pic}`
-  return `https:${pic}`
+  const normalized = pic.startsWith('https://')
+    ? pic
+    : pic.startsWith('http://')
+      ? pic.replace('http://', 'https://')
+      : pic.startsWith('//')
+        ? `https:${pic}`
+        : `https:${pic}`
+  if (
+    typeof window !== 'undefined'
+    && !window.electronAPI?.biliApi
+    && ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    && /https:\/\/i\d+\.hdslb\.com\//.test(normalized)
+  ) {
+    return `${window.location.origin}/bili-image/${normalized.replace(/^https?:\/\//, 'https:/')}`
+  }
+  return normalized
 }
 
 export async function searchVideo(keyword: string, page = 1, pageSize = 20): Promise<{ items: SearchItem[]; totalPages: number; totalResults: number }> {
@@ -278,6 +291,81 @@ export async function getNewSongs(): Promise<MusicSong[]> {
   return list.filter((x) => x.bvid).map(mapMusicSong)
 }
 
+// ===== B站收藏夹 =====
+
+export interface BiliFavoriteFolder {
+  id: number
+  title: string
+  mediaCount: number
+  coverUrl: string
+  description: string
+  updatedAt?: number
+}
+
+export async function getBiliFavoriteFolders(
+  mid?: number,
+): Promise<BiliFavoriteFolder[]> {
+  const userMid = mid || (await getUserInfo()).mid
+  if (!userMid) return []
+  const { getFavoriteFolders } = await import('@/services/bilibiliApi')
+  const data = await getFavoriteFolders(userMid)
+  return (data.list || []).map((folder) => ({
+    id: folder.id,
+    title: folder.title || '未命名收藏夹',
+    mediaCount: folder.media_count || 0,
+    coverUrl: normalizePic(folder.cover || ''),
+    description: folder.intro || '',
+    updatedAt: folder.mtime,
+  }))
+}
+
+export async function getBiliFavoriteFolderCover(mediaId: number): Promise<string> {
+  const { getFavoriteFolderMedias } = await import('@/services/bilibiliApi')
+  const detail = await getFavoriteFolderMedias(mediaId, 1, 40)
+  const firstCover = detail.medias?.find((media) => media.cover)?.cover || ''
+  return normalizePic(firstCover)
+}
+
+export async function getBiliFavoriteFolderTracks(
+  mediaId: number,
+  page = 1,
+  pageSize = 40,
+): Promise<{ info?: BiliFavoriteFolder; tracks: Track[]; hasMore: boolean }> {
+  const { getFavoriteFolderMedias } = await import('@/services/bilibiliApi')
+  const data = await getFavoriteFolderMedias(mediaId, page, pageSize)
+  const medias = data.medias || []
+  const tracks = medias
+    .filter((media) => Boolean(media.bvid || media.bv_id))
+    .map((media): Track => {
+      const bvid = media.bvid || media.bv_id || ''
+      return {
+        id: `bili-fav-${mediaId}-${bvid || media.id}`,
+        title: media.title || '未命名视频',
+        artist: media.upper?.name || 'Bilibili 用户',
+        coverUrl: normalizePic(media.cover || ''),
+        duration: media.duration || 0,
+        videoUrl: `https://www.bilibili.com/video/${bvid}`,
+        bvid,
+        aid: media.id,
+        playCount: media.cnt_info?.play || 0,
+        isLiked: false,
+      }
+    })
+
+  const info = data.info
+    ? {
+      id: data.info.id,
+      title: data.info.title || '未命名收藏夹',
+      mediaCount: data.info.media_count || tracks.length,
+      coverUrl: normalizePic(data.info.cover || ''),
+      description: data.info.intro || '',
+      updatedAt: data.info.mtime,
+    }
+    : undefined
+
+  return { info, tracks, hasMore: Boolean(data.has_more) }
+}
+
 // ===== 搜索 UP主 =====
 
 export interface UserResult {
@@ -368,6 +456,175 @@ export async function getRecommendVideos(ps = 20): Promise<VideoInfo[]> {
   const { getRecommendedVideos: rendererRec } = await import('@/services/bilibiliApi')
   const data = await rendererRec(ps)
   return (data.item || []).map(parseItem)
+}
+
+// ===== 关注动态视频 =====
+
+export interface DynamicVideo {
+  id: string
+  bvid: string
+  aid: string
+  cid: string
+  audioUrl?: string
+  title: string
+  coverUrl: string
+  duration: number
+  playCount: number
+  author: string
+  authorMid: number
+  publishedAt: number
+}
+
+export interface DynamicVideoPage {
+  videos: DynamicVideo[]
+  hasMore: boolean
+  offset: string
+}
+
+function parseDurationText(text: string): number {
+  if (!text) return 0
+  const parts = text.split(':').map(Number)
+  if (parts.some((part) => Number.isNaN(part))) return 0
+  if (parts.length === 2) return parts[0] * 60 + parts[1]
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
+  return 0
+}
+
+function parseCountText(text: string | undefined): number {
+  if (!text) return 0
+  const normalized = text.trim()
+  if (normalized.endsWith('万')) return Math.round(Number(normalized.slice(0, -1)) * 10000) || 0
+  if (normalized.endsWith('亿')) return Math.round(Number(normalized.slice(0, -1)) * 100000000) || 0
+  return Number(normalized) || 0
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error('请求超时')), timeoutMs)
+    }),
+  ])
+}
+
+export async function getFollowingDynamicVideos(
+  pageSize = 20,
+  offset = '',
+  options: { preloadAudio?: boolean } = {},
+): Promise<DynamicVideoPage> {
+  let user: { isLogin: boolean; mid: number; uname: string; face: string }
+  try {
+    user = await getUserInfo()
+  } catch {
+    return { videos: [], hasMore: false, offset: '' }
+  }
+  if (!user.isLogin || !user.mid) return { videos: [], hasMore: false, offset: '' }
+
+  const { getFollowingDynamicVideos: rendererDynamicVideos } = await import('@/services/bilibiliApi')
+  const data = await rendererDynamicVideos(offset)
+  const videos = (data.items || [])
+    .map((item) => {
+      const archive = item.modules?.module_dynamic?.major?.archive
+      const author = item.modules?.module_author
+      if (!archive?.bvid) return null
+      return {
+        id: item.id_str || archive.bvid,
+        bvid: archive.bvid,
+        aid: String(archive.aid || ''),
+        cid: String(archive.cid || ''),
+        title: archive.title || '未命名视频',
+        coverUrl: normalizePic(archive.cover || ''),
+        duration: parseDurationText(archive.duration_text || ''),
+        playCount: parseCountText(archive.stat?.play),
+        author: author?.name || user.uname || 'Bilibili 用户',
+        authorMid: author?.mid || user.mid,
+        publishedAt: author?.pub_ts || 0,
+      }
+    })
+    .filter((item): item is DynamicVideo => Boolean(item))
+    .slice(0, pageSize)
+
+  const preloadCount = options.preloadAudio === false ? 0 : Math.min(videos.length, 8)
+  for (let i = 0; i < preloadCount; i += 4) {
+    const batch = videos.slice(i, i + 4)
+    await Promise.all(batch.map(async (video, index) => {
+      try {
+        const source = await withTimeout(extractAudio(video.bvid, { aid: video.aid, cid: video.cid }), 5000)
+        videos[i + index] = {
+          ...video,
+          audioUrl: source.audioUrl,
+          duration: video.duration || source.duration,
+        }
+      } catch {
+        // 单个动态视频可能被删除、限权或无音频流，不影响其它动态展示。
+      }
+    }))
+  }
+
+  return {
+    videos,
+    hasMore: Boolean(data.has_more),
+    offset: data.offset || '',
+  }
+}
+
+// ===== B站官方字幕 =====
+
+export interface OfficialSubtitleLine {
+  from: number
+  to: number
+  content: string
+}
+
+export interface OfficialSubtitleResult {
+  lines: OfficialSubtitleLine[]
+  lan: string
+  lanDoc: string
+  sourceId: string
+}
+
+function preferSubtitle(
+  subtitles: import('@/services/bilibiliApi').PlayerSubtitleItem[],
+): import('@/services/bilibiliApi').PlayerSubtitleItem | undefined {
+  return subtitles.find((item) => {
+    const lan = `${item.lan} ${item.lan_doc}`.toLowerCase()
+    return lan.includes('zh') || lan.includes('中文') || lan.includes('chinese')
+  }) || subtitles[0]
+}
+
+export async function getBiliOfficialSubtitle(track: Track): Promise<OfficialSubtitleResult | null> {
+  const bvid = track.bvid || track.id
+  if (!bvid) return null
+  const {
+    getVideoDetail: rendererDetail,
+    getVideoSubtitleList,
+    getSubtitleFile,
+  } = await import('@/services/bilibiliApi')
+
+  try {
+    const cid = track.cid || (await rendererDetail(bvid)).cid
+    if (!cid) return null
+    const subtitles = await getVideoSubtitleList(bvid, cid)
+    const selected = preferSubtitle(subtitles)
+    if (!selected?.subtitle_url) return null
+    const file = await getSubtitleFile(selected.subtitle_url)
+    const lines = (file.body || [])
+      .filter((line) => line.content && Number.isFinite(line.from))
+      .map((line) => ({
+        from: Number(line.from),
+        to: Number(line.to || line.from),
+        content: line.content.trim(),
+      }))
+    if (!lines.length) return null
+    return {
+      lines,
+      lan: selected.lan || '',
+      lanDoc: selected.lan_doc || '',
+      sourceId: `bili-subtitle:${bvid}:${cid}`,
+    }
+  } catch {
+    return null
+  }
 }
 
 // ===== 热门/推荐 =====

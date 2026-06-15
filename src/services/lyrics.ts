@@ -6,6 +6,7 @@
  */
 
 import type { Track } from '@/types'
+import { getBiliOfficialSubtitle } from '@/services/api'
 
 export interface LyricLine {
   time: number
@@ -328,6 +329,21 @@ export function clearLyricCache(trackId: string): void {
 export async function getLyricForTrack(track: Track): Promise<LyricResult | null> {
   const entry = readCache()[track.id]
   if (entry?.status === 'ok') return entry.result
+
+  const subtitle = await getBiliOfficialSubtitle(track)
+  if (subtitle) {
+    const result: LyricResult = {
+      lines: subtitle.lines.map((line) => ({ time: line.from, text: line.content })),
+      synced: true,
+      instrumental: false,
+      trackName: track.title,
+      artistName: track.artist,
+      sourceId: subtitle.sourceId,
+    }
+    cacheOk(track.id, result)
+    return result
+  }
+
   if (entry?.status === 'miss' && Date.now() - entry.ts < MISS_TTL) return null
 
   const candidate = await searchBestCandidate(track)

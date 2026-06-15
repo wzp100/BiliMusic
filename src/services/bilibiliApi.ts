@@ -4,7 +4,27 @@
  * 已验证的 API 接口，通过浏览器 Cookie 认证访问 B 站接口
  */
 
-const BILI_API = 'https://api.bilibili.com'
+function isBrowserDevProxyAvailable(): boolean {
+  if (typeof window === 'undefined') return false
+  if (window.electronAPI?.biliApi) return false
+  return ['localhost', '127.0.0.1'].includes(window.location.hostname)
+}
+
+function biliApiBase(): string {
+  return isBrowserDevProxyAvailable() ? `${window.location.origin}/bili-api` : 'https://api.bilibili.com'
+}
+
+function biliPassportBase(): string {
+  return isBrowserDevProxyAvailable() ? `${window.location.origin}/bili-passport` : 'https://passport.bilibili.com'
+}
+
+function mediaUrl(url: string): string {
+  if (!url || !isBrowserDevProxyAvailable()) return url
+  return `${window.location.origin}/bili-media?url=${encodeURIComponent(url)}`
+}
+
+const BILI_API = biliApiBase()
+const BILI_PASSPORT = biliPassportBase()
 
 // B站图片地址统一转 https：http:// 的 hdslb 图在渲染进程会加载失败
 // （大量 https 连接建立后同主机 cleartext 请求冲突），// 协议相对地址同样补全
@@ -34,11 +54,20 @@ async function biliFetch<T>(path: string, options: BiliFetchOptions = {}): Promi
     },
   })
 
-  const data = await resp.json()
+  const data = await parseBiliJson(resp, path)
   if (data.code !== 0) {
     throw new BiliApiError(data.code, data.message, path)
   }
   return data.data as T
+}
+
+async function parseBiliJson(resp: Response, path: string): Promise<any> {
+  const text = await resp.text()
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`B站接口返回非 JSON：HTTP ${resp.status} ${path}`)
+  }
 }
 
 class BiliApiError extends Error {
@@ -140,7 +169,7 @@ async function getWbiKeys(): Promise<{ imgKey: string; subKey: string }> {
     credentials: 'include',
     headers: { Referer: 'https://www.bilibili.com' },
   })
-  const json = await resp.json()
+  const json = await parseBiliJson(resp, '/x/web-interface/nav')
   const imgUrl: string = json?.data?.wbi_img?.img_url || ''
   const subUrl: string = json?.data?.wbi_img?.sub_url || ''
   const imgKey = imgUrl.slice(imgUrl.lastIndexOf('/') + 1).split('.')[0]
@@ -217,7 +246,7 @@ export async function searchVideo(
     credentials: 'include',
     headers: { Referer: 'https://www.bilibili.com' },
   })
-  const data = await resp.json()
+  const data = await parseBiliJson(resp, '/x/web-interface/wbi/search/type')
   if (data.code !== 0) {
     throw new BiliApiError(data.code, data.message, '/x/web-interface/wbi/search/type')
   }
@@ -261,7 +290,7 @@ export async function searchUser(
     credentials: 'include',
     headers: { Referer: 'https://www.bilibili.com' },
   })
-  const data = await resp.json()
+  const data = await parseBiliJson(resp, '/x/web-interface/wbi/search/type')
   if (data.code !== 0) {
     throw new BiliApiError(data.code, data.message, '/x/web-interface/wbi/search/type')
   }
@@ -300,7 +329,7 @@ export async function getUserVideos(
     credentials: 'include',
     headers: { Referer: `https://space.bilibili.com/${mid}/video` },
   })
-  const data = await resp.json()
+  const data = await parseBiliJson(resp, '/x/space/wbi/arc/search')
   if (data.code !== 0) {
     throw new BiliApiError(data.code, data.message, '/x/space/wbi/arc/search')
   }
@@ -469,7 +498,7 @@ export function getBestAudioUrl(playData: PlayUrlData): string {
 
   // 按带宽降序排序，选择最高品质
   const sorted = [...audioStreams].sort((a, b) => b.bandwidth - a.bandwidth)
-  return sorted[0].baseUrl
+  return mediaUrl(sorted[0].baseUrl)
 }
 
 // ===== 热门/推荐 =====
@@ -490,6 +519,101 @@ export async function getPopularVideos(ps = 10, pn = 1): Promise<{ list: Popular
 
 export async function getRecommendedVideos(ps = 10): Promise<{ item: PopularVideo[] }> {
   return biliFetch('/x/web-interface/index/top/rcmd', { params: { ps } })
+}
+
+// ===== 关注动态 =====
+
+export interface DynamicArchiveModule {
+  aid: string
+  bvid: string
+  cid?: string
+  cover: string
+  duration_text?: string
+  title: string
+  desc?: string
+  stat?: {
+    play?: string
+    danmaku?: string
+  }
+}
+
+export interface DynamicAuthorModule {
+  mid: number
+  name: string
+  face: string
+  pub_ts?: number
+}
+
+export interface DynamicItem {
+  id_str: string
+  type: string
+  modules?: {
+    module_author?: DynamicAuthorModule
+    module_dynamic?: {
+      major?: {
+        type?: string
+        archive?: DynamicArchiveModule
+      }
+    }
+  }
+}
+
+export interface DynamicFeedData {
+  items?: DynamicItem[]
+  has_more?: boolean
+  offset?: string
+}
+
+export async function getFollowingDynamicVideos(
+  offset = '',
+): Promise<DynamicFeedData> {
+  return biliFetch('/x/polymer/web-dynamic/v1/feed/all', {
+    params: {
+      type: 'video',
+      timezone_offset: -480,
+      features: 'itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,decorationCard',
+      offset,
+    },
+  })
+}
+
+// ===== 官方字幕 =====
+
+export interface PlayerSubtitleItem {
+  id?: number
+  lan: string
+  lan_doc: string
+  subtitle_url: string
+}
+
+export interface BiliSubtitleLine {
+  from: number
+  to: number
+  content: string
+}
+
+export interface BiliSubtitleFile {
+  body?: BiliSubtitleLine[]
+}
+
+export async function getVideoSubtitleList(
+  bvid: string,
+  cid: string | number,
+): Promise<PlayerSubtitleItem[]> {
+  const data = await biliFetch<{ subtitle?: { subtitles?: PlayerSubtitleItem[] } }>('/x/player/v2', {
+    params: { bvid, cid },
+  })
+  return data.subtitle?.subtitles || []
+}
+
+export async function getSubtitleFile(subtitleUrl: string): Promise<BiliSubtitleFile> {
+  const url = mediaUrl(toHttpsUrl(subtitleUrl))
+  const resp = await fetch(url, {
+    credentials: 'include',
+    headers: { Referer: 'https://www.bilibili.com' },
+  })
+  const data = await parseBiliJson(resp, 'subtitle')
+  return data as BiliSubtitleFile
 }
 
 // ===== 音乐排行榜 =====
@@ -560,10 +684,62 @@ export interface FavoriteFolder {
   id: number
   title: string
   media_count: number
+  cover?: string
+  intro?: string
+  mtime?: number
 }
 
 export async function getFavoriteFolders(mid: number): Promise<{ count: number; list: FavoriteFolder[] }> {
   return biliFetch('/x/v3/fav/folder/created/list-all', { params: { up_mid: mid } })
+}
+
+export interface FavoriteMediaUpper {
+  mid: number
+  name: string
+  face: string
+}
+
+export interface FavoriteMedia {
+  id: number
+  type: number
+  title: string
+  cover: string
+  intro: string
+  page: number
+  duration: number
+  upper?: FavoriteMediaUpper
+  bvid?: string
+  bv_id?: string
+  cnt_info?: {
+    collect?: number
+    play?: number
+    danmaku?: number
+  }
+}
+
+export interface FavoriteMediaList {
+  info?: FavoriteFolder
+  medias?: FavoriteMedia[]
+  has_more?: boolean
+}
+
+export async function getFavoriteFolderMedias(
+  mediaId: number,
+  page = 1,
+  pageSize = 40,
+): Promise<FavoriteMediaList> {
+  return biliFetch('/x/v3/fav/resource/list', {
+    params: {
+      media_id: mediaId,
+      pn: page,
+      ps: pageSize,
+      keyword: '',
+      order: 'mtime',
+      type: 0,
+      tid: 0,
+      platform: 'web',
+    },
+  })
 }
 
 // ===== 完整流程：搜索 → 详情 → 音频 =====
@@ -611,7 +787,14 @@ export async function extractAudioFromVideo(
 ): Promise<TrackSource> {
   try {
     const detail = await getVideoDetail(bvid)
-    const playData = await getPlayUrl(bvid, detail.cid)
+    let playData: PlayUrlData
+    try {
+      playData = await getPlayUrl(bvid, detail.cid)
+    } catch {
+      playData = await biliFetch<PlayUrlData>('/x/player/playurl', {
+        params: { avid: detail.aid, cid: detail.cid, qn: 0, fnver: 0, fnval: 16, fourk: 1 },
+      })
+    }
     const audioUrl = getBestAudioUrl(playData)
 
     const bestAudio = [...playData.dash.audio].sort((a, b) => b.bandwidth - a.bandwidth)[0]
@@ -661,7 +844,7 @@ async function extractAudioByAvidCid(
     artist: '',
     coverUrl: '',
     duration: 0,
-    audioUrl: bestAudio.baseUrl,
+    audioUrl: mediaUrl(bestAudio.baseUrl),
     audioQuality: bestAudio.quality,
     audioMimeType: bestAudio.mimeType,
   }
@@ -685,11 +868,11 @@ export interface QrPollResult {
  * 生成扫码登录二维码
  */
 export async function generateQrCode(): Promise<QrCodeData> {
-  const resp = await fetch(`${BILI_API.replace('api', 'passport')}/x/passport-login/web/qrcode/generate`, {
+  const resp = await fetch(`${BILI_PASSPORT}/x/passport-login/web/qrcode/generate`, {
     credentials: 'include',
     headers: { Referer: 'https://passport.bilibili.com/login' },
   })
-  const data = await resp.json()
+  const data = await parseBiliJson(resp, 'qrGenerate')
   if (data.code !== 0) {
     throw new BiliApiError(data.code, data.message, 'qrGenerate')
   }
@@ -709,13 +892,13 @@ export async function generateQrCode(): Promise<QrCodeData> {
  */
 export async function pollQrCode(qrcodeKey: string): Promise<QrPollResult> {
   const resp = await fetch(
-    `${BILI_API.replace('api', 'passport')}/x/passport-login/web/qrcode/poll?qrcode_key=${qrcodeKey}`,
+    `${BILI_PASSPORT}/x/passport-login/web/qrcode/poll?qrcode_key=${qrcodeKey}`,
     {
       credentials: 'include',
       headers: { Referer: 'https://passport.bilibili.com/login' },
     },
   )
-  const data = await resp.json()
+  const data = await parseBiliJson(resp, 'qrPoll')
   // 外层 code 是 API 结果，内层 data.code 才是扫码状态
   return {
     code: data.data?.code ?? data.code,

@@ -192,6 +192,34 @@ export function addTrackToPlaylist(playlistId: string, track: Track): Playlist |
   return updatedPlaylist
 }
 
+export function addTracksToPlaylist(playlistId: string, tracks: Track[]): Playlist | null {
+  if (!tracks.length) return getPlaylist(playlistId)
+  const playlists = loadPlaylists()
+  let updatedPlaylist: Playlist | null = null
+  const updated = playlists.map((playlist) => {
+    if (playlist.id !== playlistId) return playlist
+    const existingIds = new Set(playlist.tracks.map(t => t.id))
+    const existingBvids = new Set(playlist.tracks.map(t => t.bvid).filter(Boolean))
+    const nextTracks = [...playlist.tracks]
+    for (const track of tracks) {
+      const exists = existingIds.has(track.id) || Boolean(track.bvid && existingBvids.has(track.bvid))
+      if (exists) continue
+      nextTracks.push(track)
+      existingIds.add(track.id)
+      if (track.bvid) existingBvids.add(track.bvid)
+    }
+    updatedPlaylist = {
+      ...playlist,
+      coverUrl: playlist.coverUrl || nextTracks[0]?.coverUrl || '',
+      tracks: nextTracks,
+      updatedAt: new Date().toISOString(),
+    }
+    return updatedPlaylist
+  })
+  if (updatedPlaylist) savePlaylists(updated)
+  return updatedPlaylist
+}
+
 export function loadAppSettings(): AppSettings {
   try {
     const raw = readStoredItem(SETTINGS_KEY)

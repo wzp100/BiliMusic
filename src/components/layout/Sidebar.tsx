@@ -3,9 +3,11 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   Home,
   Compass,
+  Podcast,
   Clock,
   Heart,
   ListMusic,
+  Cloud,
   Download,
   Settings,
   Search,
@@ -18,6 +20,7 @@ import {
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAppSettings } from '@/hooks/useAppSettings'
+import { getBiliFavoriteFolders, type BiliFavoriteFolder } from '@/services/api'
 import { createPlaylist, loadPlaylists, PLAYLISTS_CHANGED_EVENT } from '@/utils/storage'
 import type { Playlist } from '@/types'
 
@@ -33,6 +36,7 @@ const menuGroups: Array<{ title: string; items: NavItem[] }> = [
     items: [
       { icon: Home, label: '发现', path: '/discover' },
       { icon: Compass, label: '推荐', path: '/recommend' },
+      { icon: Podcast, label: '播客', path: '/podcasts' },
     ],
   },
   {
@@ -63,6 +67,7 @@ export default function Sidebar() {
   const { settings } = useAppSettings()
   const navigate = useNavigate()
   const [playlists, setPlaylists] = useState<Playlist[]>(() => loadPlaylists())
+  const [biliFolders, setBiliFolders] = useState<BiliFavoriteFolder[]>([])
   const [creating, setCreating] = useState(false)
   const [isNarrow, setIsNarrow] = useState(() => window.innerWidth < 1100)
   const collapsed = settings.sidebarState === 'collapsed' || (settings.sidebarState === 'auto' && isNarrow)
@@ -82,6 +87,24 @@ export default function Sidebar() {
     window.addEventListener('resize', syncWidth)
     return () => window.removeEventListener('resize', syncWidth)
   }, [])
+
+  useEffect(() => {
+    let alive = true
+    if (!isLoggedIn) {
+      setBiliFolders([])
+      return
+    }
+    getBiliFavoriteFolders()
+      .then((folders) => {
+        if (alive) setBiliFolders(folders)
+      })
+      .catch(() => {
+        if (alive) setBiliFolders([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [isLoggedIn])
 
   const handleCreatePlaylist = (input: { name: string; description?: string }) => {
     const playlist = createPlaylist(input)
@@ -192,6 +215,13 @@ export default function Sidebar() {
                 <SidebarLink
                   key={playlist.id}
                   item={{ icon: ListMusic, label: playlist.name, path: `/playlists/${playlist.id}` }}
+                  collapsed={collapsed}
+                />
+              ))}
+              {group.title === '播放列表' && biliFolders.map((folder) => (
+                <SidebarLink
+                  key={`bili-${folder.id}`}
+                  item={{ icon: Cloud, label: folder.title, path: `/playlists/bili/${folder.id}` }}
                   collapsed={collapsed}
                 />
               ))}
