@@ -39,11 +39,6 @@ export function registerBiliApiHandlers() {
     return fetchBiliApi(`/x/web-interface/index/top/rcmd?ps=${ps}`)
   })
 
-  // 音乐排行榜
-  ipcMain.handle('bili:musicRanking', async () => {
-    return fetchBiliApi('/x/web-interface/ranking/region?rid=3&day=3')
-  })
-
   // 收藏夹列表
   ipcMain.handle('bili:favorites', async (_event, mid: number) => {
     return fetchBiliApi(`/x/v3/fav/folder/created/list-all?up_mid=${mid}`)

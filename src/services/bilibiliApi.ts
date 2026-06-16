@@ -28,6 +28,11 @@ function mediaUrl(url: string): string {
   return `${window.location.origin}/bili-media?url=${encodeURIComponent(url)}`
 }
 
+function pageUrl(url: string): string {
+  if (!url || !isBrowserDevProxyAvailable()) return url
+  return `${window.location.origin}/bili-page?url=${encodeURIComponent(url)}`
+}
+
 const BILI_API = biliApiBase()
 const BILI_PASSPORT = biliPassportBase()
 
@@ -57,6 +62,7 @@ async function biliFetch<T>(path: string, options: BiliFetchOptions = {}): Promi
     credentials,
     headers: {
       Referer: referer,
+      ...(isBrowserDevProxyAvailable() ? { 'X-Bili-Referer': referer } : {}),
     },
   })
 
@@ -529,9 +535,49 @@ export async function getRecommendedVideos(ps = 10): Promise<{ item: PopularVide
 
 export const MUSIC_POPULAR_RANK_PAGE = 'https://www.bilibili.com/v/popular/rank/music'
 
+let musicRankPageSourceReady: Promise<void> | null = null
+
+async function fetchBiliPageText(url: string): Promise<string> {
+  const resp = await fetch(pageUrl(url), {
+    credentials: 'include',
+    headers: {
+      Referer: 'https://www.bilibili.com',
+    },
+  })
+  if (!resp.ok) throw new Error(`B站页面读取失败：HTTP ${resp.status}`)
+  return resp.text()
+}
+
+async function ensureMusicPopularRankPageSource(): Promise<void> {
+  if (musicRankPageSourceReady) return musicRankPageSourceReady
+  musicRankPageSourceReady = (async () => {
+    const html = await fetchBiliPageText(MUSIC_POPULAR_RANK_PAGE)
+    const scriptMatches = [...html.matchAll(/src="([^"]*popular[^"]*\.js)"/g)]
+    const scriptUrl = scriptMatches
+      .map((match) => match[1])
+      .find((src) => src.includes('/popular.'))
+      || scriptMatches[0]?.[1]
+    if (!scriptUrl) throw new Error('B站音乐排行榜页面未找到榜单脚本')
+    const absoluteScriptUrl = scriptUrl.startsWith('//')
+      ? `https:${scriptUrl}`
+      : scriptUrl.startsWith('http')
+        ? scriptUrl
+        : new URL(scriptUrl, MUSIC_POPULAR_RANK_PAGE).toString()
+    const script = await fetchBiliPageText(absoluteScriptUrl)
+    if (!script.includes('/x/web-interface/ranking/v2')) {
+      throw new Error('B站音乐排行榜页面数据源已变化')
+    }
+  })().catch((error) => {
+    musicRankPageSourceReady = null
+    throw error
+  })
+  return musicRankPageSourceReady
+}
+
 export async function getMusicPopularRank(): Promise<{ note?: string; list?: PopularVideo[] }> {
+  await ensureMusicPopularRankPageSource()
   return biliFetch('/x/web-interface/ranking/v2', {
-    params: { rid: 3, type: 'all' },
+    params: { rid: 3, type: 'all', _: Date.now() },
     referer: MUSIC_POPULAR_RANK_PAGE,
   })
 }
@@ -639,24 +685,6 @@ export async function getSubtitleFile(subtitleUrl: string): Promise<BiliSubtitle
   })
   const data = await parseBiliJson(resp, 'subtitle')
   return data as BiliSubtitleFile
-}
-
-// ===== 音乐排行榜 =====
-
-export interface MusicRankingItem {
-  bvid: string
-  aid: number
-  title: string
-  pic: string
-  owner: VideoOwner
-  stat: VideoStat
-  duration: number
-  cid: number
-  pubdate: number
-}
-
-export async function getMusicRanking(): Promise<MusicRankingItem[]> {
-  return biliFetch<MusicRankingItem[]>('/x/web-interface/ranking/region', { params: { rid: 3, day: 3 } })
 }
 
 // ===== 音乐中心 (music.bilibili.com/pc/music-center 同源数据) =====

@@ -5,7 +5,6 @@ interface BiliApi {
   nav: () => Promise<any>
   popular: (ps?: number, pn?: number) => Promise<any>
   recommend: (ps?: number) => Promise<any>
-  musicRanking: () => Promise<any>
   favorites: (mid: number) => Promise<any>
   extractAudio: (bvid: string) => Promise<{
     bvid: string

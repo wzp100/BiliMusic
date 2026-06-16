@@ -19,6 +19,43 @@ export default defineConfig({
     {
       name: 'bili-media-proxy',
       configureServer(server) {
+        server.middlewares.use('/bili-page', async (req, res) => {
+          try {
+            const requestUrl = new URL(req.url || '', 'http://localhost')
+            const target = requestUrl.searchParams.get('url')
+            if (!target) {
+              res.statusCode = 400
+              res.end('Missing page url')
+              return
+            }
+
+            const parsed = new URL(target)
+            const allowedHosts = new Set(['www.bilibili.com', 's1.hdslb.com'])
+            if (parsed.protocol !== 'https:' || !allowedHosts.has(parsed.hostname)) {
+              res.statusCode = 400
+              res.end('Unsupported page url')
+              return
+            }
+
+            const upstream = await fetch(parsed.toString(), {
+              headers: {
+                Referer: 'https://www.bilibili.com',
+                Origin: 'https://www.bilibili.com',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+              },
+            })
+
+            res.statusCode = upstream.status
+            const contentType = upstream.headers.get('content-type')
+            if (contentType) res.setHeader('content-type', contentType)
+            res.setHeader('cache-control', 'no-store')
+            res.end(await upstream.text())
+          } catch (error) {
+            res.statusCode = 502
+            res.end(error instanceof Error ? error.message : 'Page proxy failed')
+          }
+        })
+
         server.middlewares.use('/bili-media', async (req, res) => {
           try {
             const requestUrl = new URL(req.url || '', 'http://localhost')
@@ -97,10 +134,14 @@ export default defineConfig({
         secure: true,
         cookieDomainRewrite: '',
         configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            const referer = Array.isArray(req.headers['x-bili-referer'])
+              ? req.headers['x-bili-referer'][0]
+              : req.headers['x-bili-referer']
             proxyReq.setHeader('Origin', 'https://www.bilibili.com')
-            proxyReq.setHeader('Referer', 'https://www.bilibili.com')
+            proxyReq.setHeader('Referer', referer || 'https://www.bilibili.com')
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36')
+            proxyReq.removeHeader('X-Bili-Referer')
           })
         },
         rewrite: (p) => p.replace(/^\/bili-api/, ''),

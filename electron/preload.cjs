@@ -21,9 +21,6 @@ const biliApi = {
   recommend: (ps) =>
     ipcRenderer.invoke('bili:recommend', ps),
 
-  musicRanking: () =>
-    ipcRenderer.invoke('bili:musicRanking'),
-
   favorites: (mid) =>
     ipcRenderer.invoke('bili:favorites', mid),
 
