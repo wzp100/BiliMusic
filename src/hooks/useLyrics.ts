@@ -4,9 +4,12 @@ import {
   getLyricForTrack,
   searchLyricCandidates,
   chooseLyricCandidate,
+  chooseOfficialSubtitle,
   clearLyricCache,
+  getOfficialSubtitleCandidates,
   type LyricResult,
   type LyricCandidate,
+  type OfficialSubtitleOption,
 } from '@/services/lyrics'
 
 export type LyricStatus = 'idle' | 'loading' | 'ok' | 'unsynced' | 'empty'
@@ -57,11 +60,29 @@ export function useLyrics(track: Track | null, enabled: boolean) {
     setStatus(res.synced ? 'ok' : 'unsynced')
   }, [track])
 
+  const listOfficialSubtitles = useCallback((): Promise<OfficialSubtitleOption[]> => {
+    if (!track) return Promise.resolve([])
+    return getOfficialSubtitleCandidates(track)
+  }, [track])
+
+  const chooseSubtitle = useCallback(async (subtitleId: string) => {
+    if (!track) return
+    setStatus('loading')
+    const res = await chooseOfficialSubtitle(track, subtitleId)
+    if (!res) {
+      setStatus('empty')
+      setResult(null)
+      return
+    }
+    setResult(res)
+    setStatus('ok')
+  }, [track])
+
   const retry = useCallback(() => {
     if (!track) return
     clearLyricCache(track.id)
     load(track)
   }, [track, load])
 
-  return { status, result, search, choose, retry }
+  return { status, result, search, choose, retry, listOfficialSubtitles, chooseSubtitle }
 }

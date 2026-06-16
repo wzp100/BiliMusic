@@ -10,6 +10,11 @@ function isBrowserDevProxyAvailable(): boolean {
   return ['localhost', '127.0.0.1'].includes(window.location.hostname)
 }
 
+function isLocalDevServer(): boolean {
+  if (typeof window === 'undefined') return false
+  return ['localhost', '127.0.0.1'].includes(window.location.hostname)
+}
+
 function biliApiBase(): string {
   return isBrowserDevProxyAvailable() ? `${window.location.origin}/bili-api` : 'https://api.bilibili.com'
 }
@@ -19,7 +24,7 @@ function biliPassportBase(): string {
 }
 
 function mediaUrl(url: string): string {
-  if (!url || !isBrowserDevProxyAvailable()) return url
+  if (!url || !isLocalDevServer()) return url
   return `${window.location.origin}/bili-media?url=${encodeURIComponent(url)}`
 }
 
@@ -519,6 +524,20 @@ export async function getPopularVideos(ps = 10, pn = 1): Promise<{ list: Popular
 
 export async function getRecommendedVideos(ps = 10): Promise<{ item: PopularVideo[] }> {
   return biliFetch('/x/web-interface/index/top/rcmd', { params: { ps } })
+}
+
+export async function getMusicPopularRank(): Promise<{ note?: string; list?: PopularVideo[] }> {
+  return biliFetch('/x/web-interface/ranking/v2', { params: { rid: 3, type: 'all' } })
+}
+
+export async function getMusicChannelDynamic(page = 1, pageSize = 20): Promise<{ archives?: PopularVideo[] }> {
+  return biliFetch('/x/web-interface/dynamic/region', {
+    params: {
+      rid: 3,
+      pn: page,
+      ps: pageSize,
+    },
+  })
 }
 
 // ===== 关注动态 =====

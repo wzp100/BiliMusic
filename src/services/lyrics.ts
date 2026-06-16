@@ -6,7 +6,11 @@
  */
 
 import type { Track } from '@/types'
-import { getBiliOfficialSubtitle } from '@/services/api'
+import {
+  getBiliOfficialSubtitle,
+  getBiliOfficialSubtitleOptions,
+  type OfficialSubtitleOption,
+} from '@/services/api'
 
 export interface LyricLine {
   time: number
@@ -32,6 +36,8 @@ export interface LyricCandidate {
   duration: number
   image: string
 }
+
+export type { OfficialSubtitleOption }
 
 type RawOiapiSong = Awaited<ReturnType<NonNullable<typeof window.electronAPI>['lyricsApi']['search']>>[number]
 
@@ -353,6 +359,25 @@ export async function getLyricForTrack(track: Track): Promise<LyricResult | null
   const result = lyricToResult(candidate, content)
   if (!result) { cacheMiss(track.id); return null }
 
+  cacheOk(track.id, result)
+  return result
+}
+
+export async function getOfficialSubtitleCandidates(track: Track): Promise<OfficialSubtitleOption[]> {
+  return getBiliOfficialSubtitleOptions(track)
+}
+
+export async function chooseOfficialSubtitle(track: Track, subtitleId: string): Promise<LyricResult | null> {
+  const subtitle = await getBiliOfficialSubtitle(track, subtitleId)
+  if (!subtitle) return null
+  const result: LyricResult = {
+    lines: subtitle.lines.map((line) => ({ time: line.from, text: line.content })),
+    synced: true,
+    instrumental: false,
+    trackName: track.title,
+    artistName: track.artist,
+    sourceId: subtitle.sourceId,
+  }
   cacheOk(track.id, result)
   return result
 }

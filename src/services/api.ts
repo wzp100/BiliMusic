@@ -89,6 +89,7 @@ export async function searchVideo(keyword: string, page = 1, pageSize = 20): Pro
 export interface VideoInfo {
   bvid: string
   aid: number
+  audioUrl?: string
   title: string
   desc: string
   pic: string
@@ -239,9 +240,47 @@ export async function getMusicRanking(): Promise<VideoInfo[]> {
   }
 
   // 统一走渲染进程浏览器 fetch：主进程 net.fetch 会被 B站反爬拦截（-352）
-  const { getMusicRanking: rendererRanking } = await import('@/services/bilibiliApi')
+  const { getMusicPopularRank, getMusicRanking: rendererRanking } = await import('@/services/bilibiliApi')
+  try {
+    const data = await getMusicPopularRank()
+    const list = data.list || []
+    if (list.length) return list.map(parseItem)
+  } catch {
+    // B站页面数据源不可用时回退旧接口，避免发现页空白。
+  }
   const data = await rendererRanking()
   return (Array.isArray(data) ? data : (data as any).list || (data as any).data || []).map(parseItem)
+}
+
+export async function getMusicChannelRecommendations(page = 1, pageSize = 20): Promise<VideoInfo[]> {
+  const parseItem = (v: any): VideoInfo => ({
+    bvid: v.bvid,
+    aid: v.aid,
+    title: v.title,
+    desc: v.description || v.desc || '',
+    pic: normalizePic(v.pic || v.cover || ''),
+    ownerName: v.author || v.owner?.name || '',
+    ownerMid: v.mid || v.owner?.mid || 0,
+    duration: typeof v.duration === 'string' ? parseLength(v.duration) : (v.duration || 0),
+    cid: v.cid || 0,
+    stat: {
+      view: v.play || v.stat?.view || 0,
+      like: v.stat?.like || 0,
+      favorite: v.favorites || v.stat?.favorite || 0,
+    },
+  })
+
+  const { getMusicChannelDynamic, getRecommendedVideos: rendererRec } = await import('@/services/bilibiliApi')
+  try {
+    const data = await getMusicChannelDynamic(page, pageSize)
+    const list = data.archives || []
+    if (list.length) return list.map(parseItem)
+  } catch {
+    // 音乐频道抓取失败时保留原推荐接口兜底。
+  }
+
+  const fallback = await rendererRec(pageSize)
+  return (fallback.item || []).map(parseItem)
 }
 
 // ===== 音乐中心（music.bilibili.com/pc/music-center 同源数据） =====
@@ -583,6 +622,14 @@ export interface OfficialSubtitleResult {
   sourceId: string
 }
 
+export interface OfficialSubtitleOption {
+  id: string
+  lan: string
+  lanDoc: string
+  subtitleUrl: string
+  label: string
+}
+
 function preferSubtitle(
   subtitles: import('@/services/bilibiliApi').PlayerSubtitleItem[],
 ): import('@/services/bilibiliApi').PlayerSubtitleItem | undefined {
@@ -592,20 +639,62 @@ function preferSubtitle(
   }) || subtitles[0]
 }
 
-export async function getBiliOfficialSubtitle(track: Track): Promise<OfficialSubtitleResult | null> {
+async function getTrackSubtitleContext(track: Track): Promise<{
+  bvid: string
+  cid: string | number
+  subtitles: import('@/services/bilibiliApi').PlayerSubtitleItem[]
+} | null> {
   const bvid = track.bvid || track.id
   if (!bvid) return null
   const {
     getVideoDetail: rendererDetail,
     getVideoSubtitleList,
-    getSubtitleFile,
   } = await import('@/services/bilibiliApi')
 
   try {
     const cid = track.cid || (await rendererDetail(bvid)).cid
     if (!cid) return null
     const subtitles = await getVideoSubtitleList(bvid, cid)
-    const selected = preferSubtitle(subtitles)
+    return { bvid, cid, subtitles }
+  } catch {
+    return null
+  }
+}
+
+function subtitleOptionId(item: import('@/services/bilibiliApi').PlayerSubtitleItem, index: number): string {
+  return String(item.id ?? item.subtitle_url ?? `${item.lan}-${index}`)
+}
+
+function subtitleLabel(item: import('@/services/bilibiliApi').PlayerSubtitleItem, index: number): string {
+  return item.lan_doc || item.lan || `字幕 ${index + 1}`
+}
+
+export async function getBiliOfficialSubtitleOptions(track: Track): Promise<OfficialSubtitleOption[]> {
+  const ctx = await getTrackSubtitleContext(track)
+  if (!ctx) return []
+  return ctx.subtitles
+    .filter((item) => Boolean(item.subtitle_url))
+    .map((item, index) => ({
+      id: subtitleOptionId(item, index),
+      lan: item.lan || '',
+      lanDoc: item.lan_doc || '',
+      subtitleUrl: item.subtitle_url,
+      label: subtitleLabel(item, index),
+    }))
+}
+
+export async function getBiliOfficialSubtitle(
+  track: Track,
+  subtitleId?: string,
+): Promise<OfficialSubtitleResult | null> {
+  const ctx = await getTrackSubtitleContext(track)
+  if (!ctx) return null
+  const { getSubtitleFile } = await import('@/services/bilibiliApi')
+
+  try {
+    const selected = subtitleId
+      ? ctx.subtitles.find((item, index) => subtitleOptionId(item, index) === subtitleId)
+      : preferSubtitle(ctx.subtitles)
     if (!selected?.subtitle_url) return null
     const file = await getSubtitleFile(selected.subtitle_url)
     const lines = (file.body || [])
@@ -620,7 +709,7 @@ export async function getBiliOfficialSubtitle(track: Track): Promise<OfficialSub
       lines,
       lan: selected.lan || '',
       lanDoc: selected.lan_doc || '',
-      sourceId: `bili-subtitle:${bvid}:${cid}`,
+      sourceId: `bili-subtitle:${ctx.bvid}:${ctx.cid}:${subtitleOptionId(selected, ctx.subtitles.indexOf(selected))}`,
     }
   } catch {
     return null

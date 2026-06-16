@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import {
   ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat,
-  Heart, Volume2, VolumeX, Search, Music, Loader2, Maximize2, Minimize2, X, MessageCircle, ExternalLink, ThumbsUp, RefreshCw,
+  Heart, Volume2, VolumeX, Search, Music, Loader2, Maximize2, Minimize2, X, MessageCircle, ExternalLink, ThumbsUp, RefreshCw, Languages, Check,
 } from 'lucide-react'
 import { usePlayer, usePlayerProgress } from '@/contexts/PlayerContext'
 import { useNowPlaying } from '@/contexts/NowPlayingContext'
@@ -11,7 +11,7 @@ import { useAppSettings } from '@/hooks/useAppSettings'
 import { useLyrics } from '@/hooks/useLyrics'
 import PlayerSlider from '@/components/PlayerSlider'
 import LyricsView from '@/components/LyricsView'
-import type { LyricCandidate } from '@/services/lyrics'
+import type { LyricCandidate, OfficialSubtitleOption } from '@/services/lyrics'
 import { getVideoComments, type VideoComment } from '@/services/api'
 
 const sliderTheme = {
@@ -521,17 +521,53 @@ function LyricsPanel({
   onSeek: (t: number) => void
   currentTime: number
 }) {
-  const { status, result, search, choose, retry } = lyrics
+  const { status, result, search, choose, retry, listOfficialSubtitles, chooseSubtitle } = lyrics
   const [searchOpen, setSearchOpen] = useState(false)
+  const [subtitleOpen, setSubtitleOpen] = useState(false)
+  const [subtitleOptions, setSubtitleOptions] = useState<OfficialSubtitleOption[]>([])
+  const [subtitleLoading, setSubtitleLoading] = useState(false)
+  const [subtitleError, setSubtitleError] = useState('')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<LyricCandidate[]>([])
   const [searching, setSearching] = useState(false)
   const [choosingId, setChoosingId] = useState<string | null>(null)
+  const [choosingSubtitleId, setChoosingSubtitleId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSearchOpen(false)
+    setSubtitleOpen(false)
+    setSubtitleOptions([])
+    setSubtitleError('')
+    setChoosingSubtitleId(null)
+  }, [track.title, track.artist])
 
   const openSearch = () => {
     setQuery(`${track.title} ${track.artist}`.trim())
     setResults([])
+    setSubtitleOpen(false)
     setSearchOpen(true)
+  }
+
+  const loadSubtitleOptions = async (force = false) => {
+    if (!force && (subtitleOptions.length > 0 || subtitleLoading)) return
+    setSubtitleLoading(true)
+    setSubtitleError('')
+    if (force) setSubtitleOptions([])
+    try {
+      const rows = await listOfficialSubtitles()
+      setSubtitleOptions(rows)
+      if (!rows.length) setSubtitleError('当前视频没有可读取的 B站官方字幕')
+    } catch {
+      setSubtitleError('字幕列表加载失败')
+    } finally {
+      setSubtitleLoading(false)
+    }
+  }
+
+  const openSubtitlePicker = async () => {
+    setSearchOpen(false)
+    setSubtitleOpen(true)
+    await loadSubtitleOptions()
   }
 
   const doSearch = async () => {
@@ -549,8 +585,25 @@ function LyricsPanel({
     setSearchOpen(false)
   }
 
+  const pickSubtitle = async (option: OfficialSubtitleOption) => {
+    setChoosingSubtitleId(option.id)
+    await chooseSubtitle(option.id)
+    setChoosingSubtitleId(null)
+    setSubtitleOpen(false)
+  }
+
   return (
     <div className="lyrics-panel">
+      <div className="lyrics-panel__tools">
+        <button type="button" onClick={openSubtitlePicker} title="选择 B站字幕">
+          <Languages size={15} />
+          字幕
+        </button>
+        <button type="button" onClick={openSearch} title="手动搜索歌词">
+          <Search size={15} />
+          搜索
+        </button>
+      </div>
       <div className="lyrics-panel__body">
         {status === 'loading' && (
           <Centered>
@@ -563,6 +616,7 @@ function LyricsPanel({
             <Music size={42} strokeWidth={1.25} />
             <strong>暂无歌词</strong>
             <span>这首歌在歌词库里还没有匹配到</span>
+            <button type="button" onClick={openSubtitlePicker}><Languages size={14} /> 选择 B站字幕</button>
             <button type="button" onClick={openSearch}><Search size={14} /> 手动搜索歌词</button>
           </Centered>
         )}
@@ -614,6 +668,47 @@ function LyricsPanel({
             </div>
             <button type="button" className="lyrics-drawer__retry" onClick={() => { retry(); setSearchOpen(false) }}>
               重新自动匹配
+            </button>
+          </motion.div>
+        )}
+        {subtitleOpen && (
+          <motion.div
+            className="lyrics-drawer"
+            initial={{ opacity: 0, y: 18, scale: 0.985 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 18, scale: 0.985 }}
+            transition={spring}
+          >
+            <div className="lyrics-drawer__head">
+              <span>B站官方字幕</span>
+              <button type="button" onClick={() => setSubtitleOpen(false)}><X size={18} /></button>
+            </div>
+            <div className="lyrics-drawer__list">
+              {subtitleLoading && (
+                <div className="lyrics-drawer__empty">
+                  <Loader2 size={20} className="spin" />
+                  正在读取字幕列表
+                </div>
+              )}
+              {!subtitleLoading && subtitleError && <div className="lyrics-drawer__empty">{subtitleError}</div>}
+              {!subtitleLoading && !subtitleError && subtitleOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className="lyrics-candidate"
+                  onClick={() => pickSubtitle(option)}
+                  disabled={choosingSubtitleId === option.id}
+                >
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.lan || 'official'} · Bilibili</small>
+                  </span>
+                  {choosingSubtitleId === option.id ? <Loader2 size={16} className="spin" /> : <Check size={16} />}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="lyrics-drawer__retry" onClick={() => { void loadSubtitleOptions(true) }}>
+              重新读取字幕
             </button>
           </motion.div>
         )}

@@ -64,6 +64,15 @@ const PlayerProgressContext = createContext<PlayerProgress | null>(null)
 const PLAYER_STATE_KEY = 'bilimusic_player_state'
 const SILENT_AUDIO_URL = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='
 
+function isExpectedPlayInterruption(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+function logAudioPlayError(error: unknown): void {
+  if (isExpectedPlayInterruption(error)) return
+  console.error('[BiliMusic] audio play failed', error)
+}
+
 function loadPersistedPlayerState(): PersistedPlayerState {
   const fallbackVolume = localStorage.getItem('bilimusic_volume')
   const fallback: PersistedPlayerState = {
@@ -166,28 +175,48 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     toastTimerRef.current = setTimeout(() => setToast(null), 2000)
   }, [])
 
-  const unlockAudioForGesture = useCallback(() => {
-    const audio = audioRef.current
-    if (!audio) return
-    const muted = audio.muted
+  const unlockAudioForGesture = useCallback((useMainElement = false) => {
+    if (useMainElement && audioRef.current) {
+      const audio = audioRef.current
+      const muted = audio.muted
+      audio.muted = true
+      audio.src = SILENT_AUDIO_URL
+      audio.currentTime = 0
+      audio.play()
+        .then(() => {
+          if (audio.src === SILENT_AUDIO_URL) {
+            audio.pause()
+            audio.removeAttribute('src')
+            audio.load()
+            audio.muted = muted
+          }
+        })
+        .catch(() => {
+          if (audio.src === SILENT_AUDIO_URL) audio.muted = muted
+        })
+      return
+    }
+
+    const audio = new Audio(SILENT_AUDIO_URL)
     audio.muted = true
-    audio.src = SILENT_AUDIO_URL
+    audio.volume = 0
     audio.play()
       .then(() => {
-        if (audio.src === SILENT_AUDIO_URL) {
-          audio.pause()
-          audio.currentTime = 0
-          audio.muted = muted
-        }
+        audio.pause()
+        audio.src = ''
       })
-      .catch(() => {
-        if (audio.src === SILENT_AUDIO_URL) audio.muted = muted
-      })
+      .catch(() => {})
   }, [])
+
+  const applyAudioOutputState = useCallback((audio: HTMLAudioElement) => {
+    audio.volume = Math.min(1, Math.max(0, volume / 100))
+    audio.muted = isMuted
+  }, [isMuted, volume])
 
   const playResolvedAudio = useCallback((track: Track): boolean => {
     const audio = audioRef.current
     if (!audio || !track.audioUrl) return false
+    applyAudioOutputState(audio)
     audio.src = track.audioUrl
     audio.currentTime = 0
     audio.load()
@@ -196,11 +225,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     audio.play()
       .then(() => setIsPlaying(true))
       .catch((error) => {
-        console.error('[BiliMusic] audio play failed', error)
+        logAudioPlayError(error)
         setIsPlaying(false)
       })
     return true
-  }, [])
+  }, [applyAudioOutputState])
 
   // 初始化 audio 元素
   useEffect(() => {
@@ -322,13 +351,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           audio.currentTime = 0
           audio.load()
         }
+        applyAudioOutputState(audio)
         setDuration(source.duration || currentTrack!.duration || audio.duration || 0)
         if (shouldAutoplayRef.current) {
           if (audio.paused) {
             audio.play()
               .then(() => setIsPlaying(true))
               .catch((error) => {
-                console.error('[BiliMusic] audio play failed', error)
+                logAudioPlayError(error)
                 setIsPlaying(false)
               })
           } else {
@@ -359,7 +389,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     loadAndPlay()
     return () => { cancelled = true }
-  }, [currentTrack?.id, currentTrack?.bvid])
+  }, [applyAudioOutputState, currentTrack?.id, currentTrack?.bvid])
 
   // ended 事件
   useEffect(() => {
@@ -370,7 +400,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [handleTrackEnd])
 
   const play = useCallback((track: Track) => {
-    unlockAudioForGesture()
+    unlockAudioForGesture(!track.audioUrl)
     playResolvedAudio(track)
     shouldAutoplayRef.current = true
     setCurrentTrack(track)
@@ -400,13 +430,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [currentTrack, isPlaying])
 
   const next = useCallback(() => {
-    unlockAudioForGesture()
     const displayQueue = isShuffled ? shuffledQueueRef.current : queue
     if (displayQueue.length === 0) return
     const nextIdx = currentIndexRef.current + 1 >= displayQueue.length
       ? 0 : currentIndexRef.current + 1
     currentIndexRef.current = nextIdx
     shouldAutoplayRef.current = true
+    unlockAudioForGesture(!displayQueue[nextIdx].audioUrl)
     playResolvedAudio(displayQueue[nextIdx])
     setCurrentTrack(displayQueue[nextIdx])
     setProgress(0)
@@ -415,13 +445,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [isShuffled, queue, unlockAudioForGesture, playResolvedAudio])
 
   const prev = useCallback(() => {
-    unlockAudioForGesture()
     const displayQueue = isShuffled ? shuffledQueueRef.current : queue
     if (displayQueue.length === 0) return
     const prevIdx = currentIndexRef.current - 1 < 0
       ? displayQueue.length - 1 : currentIndexRef.current - 1
     currentIndexRef.current = prevIdx
     shouldAutoplayRef.current = true
+    unlockAudioForGesture(!displayQueue[prevIdx].audioUrl)
     playResolvedAudio(displayQueue[prevIdx])
     setCurrentTrack(displayQueue[prevIdx])
     setProgress(0)
@@ -514,7 +544,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // 立即播放：把曲目置于队列首位并播放（点击歌曲的默认行为）
   const playNow = useCallback((track: Track) => {
-    unlockAudioForGesture()
+    unlockAudioForGesture(!track.audioUrl)
     playResolvedAudio(track)
     shouldAutoplayRef.current = true
     setQueue(prev => [track, ...prev.filter(t => t.id !== track.id)])
@@ -563,12 +593,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const playAll = useCallback((tracks: Track[]) => {
     if (tracks.length === 0) return
-    unlockAudioForGesture()
     const favs = loadFavoriteTracks()
     const favIds = new Set(favs.map(t => t.id))
     const synced = tracks.map(t => ({ ...t, isLiked: favIds.has(t.id) }))
     setQueue(synced)
     shouldAutoplayRef.current = true
+    unlockAudioForGesture(!synced[0].audioUrl)
     playResolvedAudio(synced[0])
     setCurrentTrack(synced[0])
     currentIndexRef.current = 0
@@ -578,11 +608,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [unlockAudioForGesture, playResolvedAudio])
 
   const playFromQueue = useCallback((index: number) => {
-    unlockAudioForGesture()
     const displayQueue = isShuffled ? shuffledQueueRef.current : queue
     if (index < 0 || index >= displayQueue.length) return
     currentIndexRef.current = index
     shouldAutoplayRef.current = true
+    unlockAudioForGesture(!displayQueue[index].audioUrl)
     playResolvedAudio(displayQueue[index])
     setCurrentTrack(displayQueue[index])
     setProgress(0)

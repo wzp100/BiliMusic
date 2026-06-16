@@ -21,6 +21,7 @@ protocol.registerSchemesAsPrivileged([
 // Chrome MCP 远程调试（开发时使用）
 app.commandLine.appendSwitch('remote-debugging-port', '17689')
 app.commandLine.appendSwitch('remote-allow-origins', '*')
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 // B站请求头处理
 //
@@ -48,8 +49,9 @@ function setupBiliHeaders() {
   session.defaultSession.webRequest.onBeforeSendHeaders({ urls: biliUrls }, (details, callback) => {
     const headers = details.requestHeaders
     const origin = headers['Origin'] || headers['origin']
-    // 仅记录 API/passport 请求的真实 origin（这些请求才有对应的 onHeadersReceived 消费并清理）
-    if (origin && /^(https?|app):\/\//.test(origin) && /\/\/(api|passport)\.bilibili\.com/.test(details.url)) {
+    // 记录渲染进程真实 origin，供 onHeadersReceived 回显；字幕 JSON 在 hdslb 域名，
+    // credentials:'include' 时也必须返回具体 ACAO，不能使用 *。
+    if (origin && /^(https?|app):\/\//.test(origin)) {
       reqOrigin.set(details.id, origin)
     }
     headers['Referer'] = 'https://www.bilibili.com'
@@ -57,9 +59,8 @@ function setupBiliHeaders() {
     callback({ requestHeaders: headers })
   })
 
-  // API/passport 响应：写入 CORS 头，让渲染进程的浏览器 fetch 可跨域读取
-  const apiUrls = { urls: ['https://api.bilibili.com/*', 'https://passport.bilibili.com/*'] }
-  session.defaultSession.webRequest.onHeadersReceived(apiUrls, (details, callback) => {
+  // B站响应：写入 CORS 头，让渲染进程可读取 API 和官方字幕 JSON。
+  session.defaultSession.webRequest.onHeadersReceived({ urls: biliUrls }, (details, callback) => {
     const respHeaders: Record<string, string[]> = {}
     if (details.responseHeaders) {
       for (const [key, value] of Object.entries(details.responseHeaders)) {
@@ -518,7 +519,9 @@ function createWindow() {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
-    mainWindow.webContents.openDevTools()
+    if (process.env.BILIMUSIC_OPEN_DEVTOOLS === '1') {
+      mainWindow.webContents.openDevTools()
+    }
   } else {
     mainWindow.loadURL('app://local/index.html')
   }

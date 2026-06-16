@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Disc3, Loader2, Play, RefreshCw, TrendingUp } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { getMusicRanking, type VideoInfo } from '@/services/api'
+import { extractAudio, getMusicChannelRecommendations, getMusicRanking, type VideoInfo } from '@/services/api'
 import type { Track } from '@/types'
 import {
   ActionButton,
@@ -24,13 +24,48 @@ function videoToTrack(video: VideoInfo): Track {
     duration: video.duration,
     videoUrl: `https://www.bilibili.com/video/${video.bvid}`,
     bvid: video.bvid,
+    audioUrl: video.audioUrl,
+    aid: video.aid,
+    cid: video.cid,
     playCount: video.stat?.view || 0,
     isLiked: false,
   }
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error('请求超时')), timeoutMs)
+    }),
+  ])
+}
+
+async function preloadAudio(videos: VideoInfo[], count = 6): Promise<VideoInfo[]> {
+  const next = [...videos]
+  const targets = next.slice(0, count)
+  for (let i = 0; i < targets.length; i += 3) {
+    const batch = targets.slice(i, i + 3)
+    await Promise.all(batch.map(async (video, index) => {
+      try {
+        const source = await withTimeout(extractAudio(video.bvid, { aid: video.aid, cid: video.cid }), 5000)
+        next[i + index] = {
+          ...video,
+          audioUrl: source.audioUrl,
+          duration: video.duration || source.duration,
+          cid: video.cid || source.cid,
+        }
+      } catch {
+        // 首屏预取失败不影响列表展示，点击时播放器仍会走原有解析流程。
+      }
+    }))
+  }
+  return next
+}
+
 export default function Discover() {
-  const [tracks, setTracks] = useState<VideoInfo[]>([])
+  const [featuredTracks, setFeaturedTracks] = useState<VideoInfo[]>([])
+  const [rankTracks, setRankTracks] = useState<VideoInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const player = usePlayer()
@@ -43,8 +78,16 @@ export default function Discover() {
     setLoading(true)
     setError(null)
     try {
-      const data = await getMusicRanking()
-      setTracks(data)
+      const [featured, rank] = await Promise.all([
+        getMusicChannelRecommendations(1, 12),
+        getMusicRanking(),
+      ])
+      const [featuredWithAudio, rankWithAudio] = await Promise.all([
+        preloadAudio(featured, 6),
+        preloadAudio(rank, 6),
+      ])
+      setFeaturedTracks(featuredWithAudio)
+      setRankTracks(rankWithAudio)
     } catch (e: any) {
       setError(e.message || '加载失败')
     } finally {
@@ -53,17 +96,18 @@ export default function Discover() {
   }
 
   const handlePlayAll = useCallback(() => {
-    const playlist = tracks.slice(0, 12).map(videoToTrack)
+    const playlist = [...featuredTracks, ...rankTracks].slice(0, 18).map(videoToTrack)
     if (playlist.length > 0) player.playAll(playlist)
-  }, [tracks, player])
+  }, [featuredTracks, rankTracks, player])
 
   const handlePlayOne = useCallback((video: VideoInfo) => {
     player.playNow(videoToTrack(video))
   }, [player])
 
-  const featured = tracks.slice(0, 3)
-  const list = tracks.slice(3)
+  const featured = featuredTracks.slice(0, 6)
+  const list = rankTracks.slice(0, 30)
   const heroImage = featured[0]?.pic
+  const hasTracks = featuredTracks.length > 0 || rankTracks.length > 0
 
   return (
     <MusicPageShell>
@@ -74,7 +118,7 @@ export default function Discover() {
         image={heroImage}
         tone="pink"
         action={(
-          <ActionButton onClick={handlePlayAll} disabled={loading || tracks.length === 0}>
+          <ActionButton onClick={handlePlayAll} disabled={loading || !hasTracks}>
             <Play size={17} fill="currentColor" />
             播放全部
           </ActionButton>
@@ -91,22 +135,24 @@ export default function Discover() {
         />
       ) : (
         <>
-          <MusicSection title="精选推荐" icon={<TrendingUp size={22} />}>
-            <FeaturedGrid>
-              {featured.map((video, index) => {
-                const track = videoToTrack(video)
-                return (
-                  <FeaturedTrackCard
-                    key={video.bvid}
-                    track={track}
-                    index={index + 1}
-                    isCurrent={player.currentTrack?.id === video.bvid}
-                    onPlay={() => handlePlayOne(video)}
-                  />
-                )
-              })}
-            </FeaturedGrid>
-          </MusicSection>
+          {featured.length > 0 && (
+            <MusicSection title="精选推荐" icon={<TrendingUp size={22} />}>
+              <FeaturedGrid>
+                {featured.map((video, index) => {
+                  const track = videoToTrack(video)
+                  return (
+                    <FeaturedTrackCard
+                      key={video.bvid}
+                      track={track}
+                      index={index + 1}
+                      isCurrent={player.currentTrack?.id === video.bvid}
+                      onPlay={() => handlePlayOne(video)}
+                    />
+                  )
+                })}
+              </FeaturedGrid>
+            </MusicSection>
+          )}
 
           <MusicSection title="热门排行榜" icon={<Disc3 size={22} />}>
             <TrackList>
@@ -116,7 +162,7 @@ export default function Discover() {
                   <TrackListRow
                     key={video.bvid}
                     track={track}
-                    index={featured.length + index + 1}
+                    index={index + 1}
                     isCurrent={player.currentTrack?.id === video.bvid}
                     isPlaying={player.isPlaying}
                     onPlay={() => handlePlayOne(video)}
