@@ -240,7 +240,7 @@ export async function getMusicRanking(): Promise<VideoInfo[]> {
   }
 
   // 来源：https://www.bilibili.com/v/popular/rank/music
-  // 该页面当前由 /x/web-interface/ranking/v2?rid=3&type=all 注水。
+  // 该页面当前由 /x/web-interface/ranking/v2?rid=1003&type=all 注水。
   const { getMusicPopularRank } = await import('@/services/bilibiliApi')
   const data = await getMusicPopularRank()
   return (data.list || []).map(parseItem)

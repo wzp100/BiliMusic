@@ -577,7 +577,7 @@ async function ensureMusicPopularRankPageSource(): Promise<void> {
 export async function getMusicPopularRank(): Promise<{ note?: string; list?: PopularVideo[] }> {
   await ensureMusicPopularRankPageSource()
   return biliFetch('/x/web-interface/ranking/v2', {
-    params: { rid: 3, type: 'all', _: Date.now() },
+    params: { rid: 1003, type: 'all', web_location: '333.934', _: Date.now() },
     referer: MUSIC_POPULAR_RANK_PAGE,
   })
 }
