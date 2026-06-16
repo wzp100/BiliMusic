@@ -150,7 +150,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const { settings } = useAppSettings()
   const restoredRef = useRef(loadPersistedPlayerState())
   const [currentTrack, setCurrentTrack] = useState<Track | null>(() => restoredRef.current.currentTrack)
-  const [isPlaying, setIsPlaying] = useState(() => Boolean(restoredRef.current.currentTrack && restoredRef.current.wasPlaying))
+  const [isPlaying, setIsPlaying] = useState(false)
   const [progress, setProgress] = useState(() => restoredRef.current.progress)
   const [duration, setDuration] = useState(() => restoredRef.current.duration)
   const [volume, setVolumeState] = useState(() => restoredRef.current.volume)
@@ -164,7 +164,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const shuffledQueueRef = useRef<Track[]>([])
   const currentIndexRef = useRef(restoredRef.current.currentIndex)
-  const shouldAutoplayRef = useRef(Boolean(restoredRef.current.currentTrack && restoredRef.current.wasPlaying))
+  const shouldAutoplayRef = useRef(false)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const progressRef = useRef(progress)
   const durationRef = useRef(duration)
@@ -646,7 +646,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         isMuted,
         repeatMode,
         isShuffled,
-        wasPlaying: isPlaying,
+        wasPlaying: false,
         currentIndex: currentIndexRef.current,
       }
       localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify(state))
