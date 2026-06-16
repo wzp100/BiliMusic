@@ -43,10 +43,11 @@ export function toHttpsUrl(url: string): string {
 interface BiliFetchOptions {
   credentials?: RequestCredentials
   params?: Record<string, string | number>
+  referer?: string
 }
 
 async function biliFetch<T>(path: string, options: BiliFetchOptions = {}): Promise<T> {
-  const { credentials = 'include', params } = options
+  const { credentials = 'include', params, referer = 'https://www.bilibili.com' } = options
   const url = new URL(`${BILI_API}${path}`)
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)))
@@ -55,7 +56,7 @@ async function biliFetch<T>(path: string, options: BiliFetchOptions = {}): Promi
   const resp = await fetch(url.toString(), {
     credentials,
     headers: {
-      Referer: 'https://www.bilibili.com',
+      Referer: referer,
     },
   })
 
@@ -526,8 +527,13 @@ export async function getRecommendedVideos(ps = 10): Promise<{ item: PopularVide
   return biliFetch('/x/web-interface/index/top/rcmd', { params: { ps } })
 }
 
+export const MUSIC_POPULAR_RANK_PAGE = 'https://www.bilibili.com/v/popular/rank/music'
+
 export async function getMusicPopularRank(): Promise<{ note?: string; list?: PopularVideo[] }> {
-  return biliFetch('/x/web-interface/ranking/v2', { params: { rid: 3, type: 'all' } })
+  return biliFetch('/x/web-interface/ranking/v2', {
+    params: { rid: 3, type: 'all' },
+    referer: MUSIC_POPULAR_RANK_PAGE,
+  })
 }
 
 export async function getMusicChannelDynamic(page = 1, pageSize = 20): Promise<{ archives?: PopularVideo[] }> {

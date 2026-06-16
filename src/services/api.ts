@@ -239,17 +239,11 @@ export async function getMusicRanking(): Promise<VideoInfo[]> {
     }
   }
 
-  // 统一走渲染进程浏览器 fetch：主进程 net.fetch 会被 B站反爬拦截（-352）
-  const { getMusicPopularRank, getMusicRanking: rendererRanking } = await import('@/services/bilibiliApi')
-  try {
-    const data = await getMusicPopularRank()
-    const list = data.list || []
-    if (list.length) return list.map(parseItem)
-  } catch {
-    // B站页面数据源不可用时回退旧接口，避免发现页空白。
-  }
-  const data = await rendererRanking()
-  return (Array.isArray(data) ? data : (data as any).list || (data as any).data || []).map(parseItem)
+  // 来源：https://www.bilibili.com/v/popular/rank/music
+  // 该页面当前由 /x/web-interface/ranking/v2?rid=3&type=all 注水。
+  const { getMusicPopularRank } = await import('@/services/bilibiliApi')
+  const data = await getMusicPopularRank()
+  return (data.list || []).map(parseItem)
 }
 
 export async function getMusicChannelRecommendations(page = 1, pageSize = 20): Promise<VideoInfo[]> {
