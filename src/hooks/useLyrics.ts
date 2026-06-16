@@ -66,16 +66,17 @@ export function useLyrics(track: Track | null, enabled: boolean) {
   }, [track])
 
   const chooseSubtitle = useCallback(async (subtitleId: string) => {
-    if (!track) return
+    if (!track) return false
     setStatus('loading')
     const res = await chooseOfficialSubtitle(track, subtitleId)
     if (!res) {
       setStatus('empty')
       setResult(null)
-      return
+      return false
     }
     setResult(res)
     setStatus('ok')
+    return true
   }, [track])
 
   const retry = useCallback(() => {

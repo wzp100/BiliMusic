@@ -334,7 +334,7 @@ export function clearLyricCache(trackId: string): void {
 
 export async function getLyricForTrack(track: Track): Promise<LyricResult | null> {
   const entry = readCache()[track.id]
-  if (entry?.status === 'ok') return entry.result
+  if (entry?.status === 'ok' && entry.result.sourceId.startsWith('bili-subtitle:')) return entry.result
 
   const subtitle = await getBiliOfficialSubtitle(track)
   if (subtitle) {
@@ -350,6 +350,7 @@ export async function getLyricForTrack(track: Track): Promise<LyricResult | null
     return result
   }
 
+  if (entry?.status === 'ok') return entry.result
   if (entry?.status === 'miss' && Date.now() - entry.ts < MISS_TTL) return null
 
   const candidate = await searchBestCandidate(track)

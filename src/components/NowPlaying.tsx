@@ -587,9 +587,14 @@ function LyricsPanel({
 
   const pickSubtitle = async (option: OfficialSubtitleOption) => {
     setChoosingSubtitleId(option.id)
-    await chooseSubtitle(option.id)
+    setSubtitleError('')
+    const ok = await chooseSubtitle(option.id)
     setChoosingSubtitleId(null)
-    setSubtitleOpen(false)
+    if (ok) {
+      setSubtitleOpen(false)
+    } else {
+      setSubtitleError('这个字幕文件读取失败，请换一个字幕试试')
+    }
   }
 
   return (

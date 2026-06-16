@@ -662,7 +662,12 @@ async function getTrackSubtitleContext(track: Track): Promise<{
 }
 
 function subtitleOptionId(item: import('@/services/bilibiliApi').PlayerSubtitleItem, index: number): string {
-  return String(item.id ?? item.subtitle_url ?? `${item.lan}-${index}`)
+  const basis = `${item.subtitle_url || item.lan || item.lan_doc || ''}:${item.id ?? ''}`
+  let hash = 0
+  for (let i = 0; i < basis.length; i += 1) {
+    hash = ((hash << 5) - hash + basis.charCodeAt(i)) | 0
+  }
+  return `${index}:${Math.abs(hash).toString(36)}`
 }
 
 function subtitleLabel(item: import('@/services/bilibiliApi').PlayerSubtitleItem, index: number): string {
@@ -673,7 +678,6 @@ export async function getBiliOfficialSubtitleOptions(track: Track): Promise<Offi
   const ctx = await getTrackSubtitleContext(track)
   if (!ctx) return []
   return ctx.subtitles
-    .filter((item) => Boolean(item.subtitle_url))
     .map((item, index) => ({
       id: subtitleOptionId(item, index),
       lan: item.lan || '',
@@ -681,6 +685,7 @@ export async function getBiliOfficialSubtitleOptions(track: Track): Promise<Offi
       subtitleUrl: item.subtitle_url,
       label: subtitleLabel(item, index),
     }))
+    .filter((item) => Boolean(item.subtitleUrl))
 }
 
 export async function getBiliOfficialSubtitle(
