@@ -511,6 +511,11 @@ function BiliFavoriteDetail({ favoriteId }: { favoriteId: number }) {
   const { isLoggedIn, setShowLogin } = useAuth()
 
   const loadTracks = async () => {
+    if (!Number.isFinite(favoriteId) || favoriteId <= 0) {
+      setLoading(false)
+      setError('收藏夹地址无效。')
+      return
+    }
     if (!isLoggedIn) {
       setLoading(false)
       setError('需要先登录 Bilibili 才能读取收藏夹。')
@@ -527,12 +532,6 @@ function BiliFavoriteDetail({ favoriteId }: { favoriteId: number }) {
     } finally {
       setLoading(false)
     }
-  }
-
-  const addFromBiliFavorites = (tracksToAdd: Track[]) => {
-    const updated = addTracksToPlaylist(playlist.id, tracksToAdd)
-    setPlaylist(updated)
-    setImportingBili(false)
   }
 
   useEffect(() => {
@@ -593,13 +592,6 @@ function BiliFavoriteDetail({ favoriteId }: { favoriteId: number }) {
             ))}
           </TrackList>
         </MusicSection>
-      )}
-      {importingBili && (
-        <BiliFavoriteImportDialog
-          playlist={playlist}
-          onClose={() => setImportingBili(false)}
-          onAdd={addFromBiliFavorites}
-        />
       )}
     </MusicPageShell>
   )
