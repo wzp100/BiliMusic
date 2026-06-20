@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
 import { getLoginStatus, getUserInfo, logout as apiLogout } from '@/services/api'
+import { clearBiliFavoriteCache } from '@/services/biliFavorites'
+import { clearBiliHistoryCache } from '@/services/biliHistory'
 
 const STORAGE_KEY = 'bilimusic_user'
 
@@ -60,12 +62,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveCachedUser(info.uname, info.face)
       } else {
         clearCachedUser()
+        clearBiliFavoriteCache()
+        clearBiliHistoryCache()
         setUsername('未登录')
         setAvatar('')
       }
     } catch {
       setIsLoggedIn(false)
       clearCachedUser()
+      clearBiliFavoriteCache()
+      clearBiliHistoryCache()
     } finally {
       setLoading(false)
     }
@@ -79,6 +85,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUsername('未登录')
     setAvatar('')
     clearCachedUser()
+    clearBiliFavoriteCache()
+    clearBiliHistoryCache()
   }, [])
 
   useEffect(() => {

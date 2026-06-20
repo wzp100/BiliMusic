@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useMemo, useRef, useEffect, type ReactNode } from 'react'
 import type { Track, RepeatMode } from '@/types'
-import { extractAudio } from '@/services/api'
+import { extractAudio, getVideoPageTracks } from '@/services/api'
+import { getBiliMusicMetadataForTrack } from '@/services/biliMusic'
 import { addRecentTrack, toggleFavoriteTrack, loadFavoriteTracks } from '@/utils/storage'
 import { useAppSettings } from '@/hooks/useAppSettings'
 
@@ -168,6 +169,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const progressRef = useRef(progress)
   const durationRef = useRef(duration)
+  const currentTrackRef = useRef<Track | null>(currentTrack)
+  const shuffledQueueOrderKeyRef = useRef('')
+  const queueOrderKey = useMemo(() => queue.map(track => track.id).join('\u0001'), [queue])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -278,6 +282,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     durationRef.current = duration
   }, [duration])
+
+  useEffect(() => {
+    currentTrackRef.current = currentTrack
+  }, [currentTrack])
 
   const handleTrackEnd = useCallback(() => {
     const displayQueue = isShuffled ? shuffledQueueRef.current : queue
@@ -411,6 +419,29 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     currentIndexRef.current = idx >= 0 ? idx : 0
   }, [isShuffled, queue, unlockAudioForGesture, playResolvedAudio])
 
+  const hydrateAlbumQueue = useCallback(async (track: Track): Promise<Track | null> => {
+    try {
+      const pages = await getVideoPageTracks(track)
+      if (pages.length <= 1) return null
+      const targetIndex = Math.max(0, pages.findIndex(page => (
+        page.cid && track.cid && String(page.cid) === String(track.cid)
+      )))
+      const target = pages[targetIndex] || pages[0]
+      setQueue(pages)
+      currentIndexRef.current = targetIndex
+      setCurrentTrack(prev => {
+        if (!prev) return target
+        if ((prev.bvid || prev.id) !== (track.bvid || track.id)) return prev
+        return target
+      })
+      setDuration(target.duration || 0)
+      return target
+    } catch {
+      // 多 P 详情只作为队列增强，失败时保持原单曲播放。
+      return null
+    }
+  }, [])
+
   const pause = useCallback(() => {
     shouldAutoplayRef.current = false
     audioRef.current?.pause()
@@ -484,7 +515,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       return newQueue
     })
-    showToast(exists ? '已在播放列表中' : '已加入播放列表')
+    showToast(exists ? '已在队列中' : '已加入队列')
   }, [queue, currentTrack, showToast])
 
   const addTracksToQueue = useCallback((tracks: Track[]) => {
@@ -542,6 +573,29 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     })
   }, [resyncIndex])
 
+  const enrichWithBiliMusicMetadata = useCallback((track: Track) => {
+    void getBiliMusicMetadataForTrack(track).then((metadata) => {
+      if (!metadata) return
+      const matchesExactTrack = (candidate: Track | null) => {
+        if (!candidate) return false
+        if (candidate.id === track.id) return true
+        return Boolean(candidate.bvid === track.bvid && candidate.cid && track.cid && String(candidate.cid) === String(track.cid))
+      }
+      setCurrentTrack(prev => {
+        if (matchesExactTrack(prev)) return { ...prev, ...metadata }
+        if (!track.cid && prev?.bvid === track.bvid) return { ...prev, ...metadata }
+        return prev
+      })
+      setQueue(prev => prev.map(t => matchesExactTrack(t) ? { ...t, ...metadata } : t))
+    }).catch(() => {
+      // 音乐中心不是所有视频都有条目，匹配失败时保留视频元数据。
+    })
+  }, [])
+
+  useEffect(() => {
+    if (currentTrack) enrichWithBiliMusicMetadata(currentTrack)
+  }, [currentTrack?.cid, currentTrack?.id, enrichWithBiliMusicMetadata])
+
   // 立即播放：把曲目置于队列首位并播放（点击歌曲的默认行为）
   const playNow = useCallback((track: Track) => {
     unlockAudioForGesture(!track.audioUrl)
@@ -553,7 +607,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setDuration(track.duration || 0)
     currentIndexRef.current = 0
     setIsPlaying(true)
-  }, [unlockAudioForGesture, playResolvedAudio])
+    void hydrateAlbumQueue(track)
+  }, [hydrateAlbumQueue, unlockAudioForGesture, playResolvedAudio])
 
   // 下一首播放：把曲目插入到当前曲目之后（不在队列则新增；无播放则等同立即播放）
   const playNext = useCallback((track: Track) => {
@@ -620,10 +675,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setIsPlaying(true)
   }, [isShuffled, queue, unlockAudioForGesture, playResolvedAudio])
 
-  // 更新 shuffledQueueRef
+  // 更新 shuffledQueueRef：队列成员变化时才重新洗牌，元数据补全只同步对象内容。
   useEffect(() => {
-    shuffledQueueRef.current = isShuffled ? shuffleArray(queue) : queue
-  }, [queue, isShuffled])
+    if (!isShuffled) {
+      shuffledQueueRef.current = queue
+      shuffledQueueOrderKeyRef.current = ''
+      return
+    }
+
+    if (shuffledQueueOrderKeyRef.current !== queueOrderKey || shuffledQueueRef.current.length === 0) {
+      const currentId = currentTrackRef.current?.id
+      const shuffled = shuffleArray(queue)
+      if (currentId) {
+        const index = shuffled.findIndex(track => track.id === currentId)
+        if (index > 0) {
+          const [current] = shuffled.splice(index, 1)
+          shuffled.unshift(current)
+        }
+      }
+      shuffledQueueRef.current = shuffled
+      shuffledQueueOrderKeyRef.current = queueOrderKey
+      return
+    }
+
+    const latestById = new Map(queue.map(track => [track.id, track]))
+    shuffledQueueRef.current = shuffledQueueRef.current
+      .map(track => latestById.get(track.id) || track)
+      .filter(track => latestById.has(track.id))
+  }, [isShuffled, queue, queueOrderKey])
 
   useEffect(() => {
     if (!currentTrack) {
@@ -660,6 +739,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       hasTrack: Boolean(currentTrack),
       title: currentTrack?.title || '未在播放',
       artist: currentTrack?.artist || '搜索并播放音乐',
+      albumTitle: currentTrack?.albumTitle || '',
       coverUrl: currentTrack?.coverUrl || '',
       isPlaying,
       queueLength: queue.length,
@@ -670,7 +750,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const observer = new MutationObserver(pushTrayState)
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
     return () => observer.disconnect()
-  }, [currentTrack?.artist, currentTrack?.coverUrl, currentTrack?.id, currentTrack?.title, isPlaying, queue.length])
+  }, [currentTrack?.albumTitle, currentTrack?.artist, currentTrack?.coverUrl, currentTrack?.id, currentTrack?.title, isPlaying, queue.length])
 
   useEffect(() => {
     return window.electronAPI?.onTrayPlayerCommand?.((command) => {
@@ -745,10 +825,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: currentTrack.title || '未命名歌曲',
       artist: currentTrack.artist || 'BiliMusic',
-      album: 'BiliMusic',
+      album: currentTrack.albumTitle || 'BiliMusic',
       artwork,
     })
-  }, [currentTrack?.artist, currentTrack?.coverUrl, currentTrack?.id, currentTrack?.title])
+  }, [currentTrack?.albumTitle, currentTrack?.artist, currentTrack?.coverUrl, currentTrack?.id, currentTrack?.title])
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return

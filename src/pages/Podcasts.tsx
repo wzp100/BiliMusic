@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Play, Podcast, RefreshCw, Radio } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { getFollowingDynamicVideos, type DynamicVideo } from '@/services/api'
+import { RELAXED_SCROLL_REQUEST_GATE, useRequestGate, type RequestGateSource } from '@/hooks/useRequestGate'
+import { getFollowingDynamicVideos, type DynamicVideo } from '@/services/biliDynamics'
 import type { Track } from '@/types'
 import {
   ActionButton,
@@ -15,6 +16,7 @@ import {
 
 const PAGE_SIZE = 24
 const MAX_TARGETED_LOAD_PAGES = 6
+const AUTO_LOAD_ROOT_MARGIN = '520px 0px'
 
 function dynamicVideoToTrack(video: DynamicVideo): Track {
   return {
@@ -43,6 +45,9 @@ export default function Podcasts() {
   const [offset, setOffset] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [moreError, setMoreError] = useState('')
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null)
+  const loadingMoreRef = useRef(false)
+  const requestGate = useRequestGate(RELAXED_SCROLL_REQUEST_GATE)
   const player = usePlayer()
 
   useEffect(() => {
@@ -53,6 +58,7 @@ export default function Podcasts() {
     setLoading(true)
     setError(null)
     setMoreError('')
+    requestGate.reset()
     try {
       const page = await getFollowingDynamicVideos(PAGE_SIZE)
       setVideos(page.videos)
@@ -65,8 +71,13 @@ export default function Podcasts() {
     }
   }
 
-  async function loadMore() {
-    if (!hasMore || !offset || loadingMore) return
+  const loadMore = useCallback(async (source: RequestGateSource = 'manual') => {
+    if (!hasMore || !offset || loadingMore || loadingMoreRef.current) return
+    if (!requestGate.canStart(source)) {
+      if (source === 'manual') setMoreError('加载太频繁，请稍等一下再试。')
+      return
+    }
+    loadingMoreRef.current = true
     setLoadingMore(true)
     setMoreError('')
     try {
@@ -95,11 +106,32 @@ export default function Podcasts() {
       setHasMore(nextHasMore)
       setOffset(nextOffset)
     } catch {
+      if (source === 'auto') requestGate.markAutoError()
       setMoreError('加载更多动态失败，请稍后再试。')
     } finally {
+      loadingMoreRef.current = false
       setLoadingMore(false)
     }
-  }
+  }, [dateOptions, hasMore, loadingMore, offset, requestGate, selectedDateKey])
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current
+    if (!sentinel || !hasMore || loading || error) return
+
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[0]
+      if (entry?.isIntersecting) {
+        loadMore('auto')
+      }
+    }, {
+      root: null,
+      rootMargin: AUTO_LOAD_ROOT_MARGIN,
+      threshold: 0,
+    })
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [error, hasMore, loadMore, loading])
 
   const handlePlay = useCallback((video: DynamicVideo) => {
     player.playNow(dynamicVideoToTrack(video))
@@ -155,23 +187,25 @@ export default function Podcasts() {
           </div>
 
           {visibleVideos.length > 0 ? (
-            <MusicSection title={selectedDate.label} icon={<Podcast size={22} />}>
-              <FeaturedGrid>
-                {visibleVideos.map((video) => {
-                  const track = dynamicVideoToTrack(video)
-                  const index = videos.findIndex((item) => item.id === video.id) + 1
-                  return (
-                    <FeaturedTrackCard
-                      key={video.id}
-                      track={track}
-                      index={index}
-                      isCurrent={player.currentTrack?.id === track.id}
-                      onPlay={() => handlePlay(video)}
-                    />
-                  )
-                })}
-              </FeaturedGrid>
-            </MusicSection>
+            <div className="uniform-card-grid">
+              <MusicSection title={selectedDate.label} icon={<Podcast size={22} />}>
+                <FeaturedGrid>
+                  {visibleVideos.map((video) => {
+                    const track = dynamicVideoToTrack(video)
+                    const index = videos.findIndex((item) => item.id === video.id) + 1
+                    return (
+                      <FeaturedTrackCard
+                        key={video.id}
+                        track={track}
+                        index={index}
+                        isCurrent={player.currentTrack?.id === track.id}
+                        onPlay={() => handlePlay(video)}
+                      />
+                    )
+                  })}
+                </FeaturedGrid>
+              </MusicSection>
+            </div>
           ) : (
             <EmptyLibrary
               icon={<Radio size={38} />}
@@ -182,12 +216,17 @@ export default function Podcasts() {
 
           {hasMore && (
             <div className="podcasts-load-more">
-              <ActionButton onClick={loadMore} disabled={loadingMore} tone="subtle">
+              <ActionButton onClick={() => loadMore('manual')} disabled={loadingMore} tone="subtle">
                 {loadingMore ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-                获取更多
+                {loadingMore ? '正在加载' : '获取更多'}
               </ActionButton>
             </div>
           )}
+          <div
+            ref={loadMoreSentinelRef}
+            className="podcasts-load-sentinel"
+            aria-hidden="true"
+          />
           {moreError && <div className="podcasts-load-error">{moreError}</div>}
         </>
       )}

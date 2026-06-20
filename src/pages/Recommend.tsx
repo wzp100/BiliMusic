@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Flame, Loader2, Play, RefreshCw, Sparkles } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { getMusicCenterRank, getNewSongs, type MusicSong } from '@/services/api'
+import { getMusicCenterRank, getNewSongs, type MusicSong } from '@/services/biliMusic'
 import type { Track } from '@/types'
 import {
   ActionButton,
@@ -20,6 +20,7 @@ function songToTrack(s: MusicSong): Track {
     id: s.bvid,
     title: s.title,
     artist: s.artist,
+    albumTitle: s.album,
     coverUrl: s.coverUrl,
     duration: 0,
     videoUrl: `https://www.bilibili.com/video/${s.bvid}`,

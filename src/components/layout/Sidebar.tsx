@@ -4,13 +4,14 @@ import {
   Home,
   Compass,
   Podcast,
+  Tags,
   Clock,
+  History,
   Heart,
   ListMusic,
   Cloud,
   Download,
   Settings,
-  Search,
   User,
   ChevronRight,
   Plus,
@@ -20,15 +21,18 @@ import {
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAppSettings } from '@/hooks/useAppSettings'
-import { getBiliFavoriteFolders, type BiliFavoriteFolder } from '@/services/api'
+import { getBiliFavoriteFolders, type BiliFavoriteFolder } from '@/services/biliFavorites'
 import { createPlaylist, loadPlaylists, PLAYLISTS_CHANGED_EVENT } from '@/utils/storage'
 import type { Playlist } from '@/types'
+import appIcon from '@/assets/icon.png'
 
 interface NavItem {
   icon: LucideIcon
   label: string
   path: string
 }
+
+const PLAYLIST_GROUP_TITLE = '歌单'
 
 const menuGroups: Array<{ title: string; items: NavItem[] }> = [
   {
@@ -37,18 +41,20 @@ const menuGroups: Array<{ title: string; items: NavItem[] }> = [
       { icon: Home, label: '发现', path: '/discover' },
       { icon: Compass, label: '推荐', path: '/recommend' },
       { icon: Podcast, label: '播客', path: '/podcasts' },
+      { icon: Tags, label: '分类', path: '/categories' },
     ],
   },
   {
     title: '资料库',
     items: [
       { icon: Clock, label: '最近播放', path: '/recent' },
+      { icon: History, label: '历史记录', path: '/history' },
       { icon: Heart, label: '我喜欢', path: '/favorites' },
       { icon: Download, label: '本地下载', path: '/downloads' },
     ],
   },
   {
-    title: '播放列表',
+    title: PLAYLIST_GROUP_TITLE,
     items: [
       { icon: ListMusic, label: '所有歌单', path: '/playlists' },
     ],
@@ -136,40 +142,9 @@ export default function Sidebar() {
           transition: 'width var(--duration-normal) var(--easing-decelerate)',
         } as React.CSSProperties}
       >
-      <div
-        style={{
-          height: 14,
-          flexShrink: 0,
-        }}
-      />
-
-      <div style={{ padding: '0 14px 14px' }}>
-        <NavLink to="/search" style={{ textDecoration: 'none' }}>
-          {({ isActive }) => (
-            <motion.div
-              whileHover={{ backgroundColor: 'var(--sidebar-hover)' }}
-              whileTap={{ scale: 0.985 }}
-              transition={{ duration: 0.18 }}
-              style={{
-                height: 32,
-                borderRadius: 7,
-                background: isActive ? 'var(--sidebar-active-bg)' : 'var(--sidebar-search-bg)',
-                border: '1px solid var(--sidebar-control-border)',
-                boxShadow: isActive ? 'var(--sidebar-active-shadow)' : 'var(--sidebar-control-shadow)',
-                color: isActive ? 'var(--sidebar-text)' : 'var(--sidebar-muted-text)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: collapsed ? 'center' : 'flex-start',
-                gap: 8,
-                padding: '0 11px',
-                cursor: 'pointer',
-              }}
-            >
-              <Search size={15} strokeWidth={2.2} style={{ color: isActive ? 'var(--color-primary)' : 'var(--sidebar-subtle-text)' }} />
-              {!collapsed && <span style={{ fontSize: 13, fontWeight: 500, lineHeight: 1 }}>搜索</span>}
-            </motion.div>
-          )}
-        </NavLink>
+      <div className={`sidebar-brand ${collapsed ? 'is-collapsed' : ''}`}>
+        <img src={appIcon} alt="" draggable={false} />
+        {!collapsed && <span>BiliMusic</span>}
       </div>
 
       <div
@@ -192,7 +167,7 @@ export default function Sidebar() {
           >
             <div className={`sidebar-group-title ${collapsed ? 'is-collapsed' : ''}`}>
               {!collapsed && <span>{group.title}</span>}
-              {group.title === '播放列表' && (
+              {group.title === PLAYLIST_GROUP_TITLE && (
                 <motion.button
                   type="button"
                   aria-label="新建歌单"
@@ -211,14 +186,14 @@ export default function Sidebar() {
               {group.items.map((item) => (
                 <SidebarLink key={item.path} item={item} collapsed={collapsed} />
               ))}
-              {group.title === '播放列表' && playlists.map((playlist) => (
+              {group.title === PLAYLIST_GROUP_TITLE && playlists.map((playlist) => (
                 <SidebarLink
                   key={playlist.id}
                   item={{ icon: ListMusic, label: playlist.name, path: `/playlists/${playlist.id}` }}
                   collapsed={collapsed}
                 />
               ))}
-              {group.title === '播放列表' && biliFolders.map((folder) => (
+              {group.title === PLAYLIST_GROUP_TITLE && biliFolders.map((folder) => (
                 <SidebarLink
                   key={`bili-${folder.id}`}
                   item={{ icon: Cloud, label: folder.title, path: `/playlists/bili/${folder.id}` }}

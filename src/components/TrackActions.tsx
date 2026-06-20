@@ -4,9 +4,9 @@ import AddToPlaylistButton from '@/components/AddToPlaylistButton'
 import type { Track } from '@/types'
 
 /**
- * 歌曲行内操作：下一首播放 / 加入播放列表
+ * 歌曲行内操作：下一首播放 / 加入队列 / 添加至歌单
  *
- * 点击歌曲本身 = 立即播放（playNow）；这两个按钮才执行队列追加/插入逻辑。
+ * 点击歌曲本身 = 立即播放（playNow）；这些按钮只执行队列追加/插入逻辑。
  * 外层 stopPropagation，避免触发所在行/卡片的点击播放。
  */
 export default function TrackActions({ track, size = 16 }: { track: Track; size?: number }) {
@@ -24,7 +24,7 @@ export default function TrackActions({ track, size = 16 }: { track: Track; size?
         icon={<ListStart size={size} />}
       />
       <ActionButton
-        title={queued ? '已在播放列表' : '加入播放列表'}
+        title={queued ? '已在队列' : '加入队列'}
         onClick={() => player.addToQueue(track)}
         icon={queued ? <Check size={size} /> : <Plus size={size} />}
         color={queued ? 'var(--color-muted)' : undefined}

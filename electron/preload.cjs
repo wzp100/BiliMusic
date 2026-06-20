@@ -24,6 +24,9 @@ const biliApi = {
   favorites: (mid) =>
     ipcRenderer.invoke('bili:favorites', mid),
 
+  favoriteResourceDeal: (rid, mediaId) =>
+    ipcRenderer.invoke('bili:favoriteResourceDeal', rid, mediaId),
+
   extractAudio: (bvid) =>
     ipcRenderer.invoke('bili:extractAudio', bvid),
 

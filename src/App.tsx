@@ -11,7 +11,9 @@ import Discover from '@/pages/Discover'
 import SearchPage from '@/pages/Search'
 import Recommend from '@/pages/Recommend'
 import Podcasts from '@/pages/Podcasts'
+import Categories from '@/pages/Categories'
 import Recent from '@/pages/Recent'
+import History from '@/pages/History'
 import Favorites from '@/pages/Favorites'
 import Playlists from '@/pages/Playlists'
 import Downloads from '@/pages/Downloads'
@@ -52,7 +54,9 @@ export default function App() {
                 <Route path="/search" element={<SearchPage />} />
                 <Route path="/recommend" element={<Recommend />} />
                 <Route path="/podcasts" element={<Podcasts />} />
+                <Route path="/categories" element={<Categories />} />
                 <Route path="/recent" element={<Recent />} />
+                <Route path="/history" element={<History />} />
                 <Route path="/favorites" element={<Favorites />} />
                 <Route path="/playlists" element={<Playlists />} />
                 <Route path="/playlists/bili/:favoriteId" element={<Playlists />} />

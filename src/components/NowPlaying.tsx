@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import {
   ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat,
-  Heart, Volume2, VolumeX, Search, Music, Loader2, Maximize2, Minimize2, X, MessageCircle, ExternalLink, ThumbsUp, RefreshCw, Languages, Check,
+  Heart, Volume2, VolumeX, Search, Music, Loader2, Maximize2, Minimize2, Minus, X, MessageCircle, ExternalLink, ThumbsUp, RefreshCw, Languages, Check,
 } from 'lucide-react'
 import { usePlayer, usePlayerProgress } from '@/contexts/PlayerContext'
 import { useNowPlaying } from '@/contexts/NowPlayingContext'
@@ -34,6 +34,7 @@ export default function NowPlaying() {
   const lyrics = useLyrics(track, expanded && settings.showLyrics)
   const duration = liveDuration || track?.duration || 0
   const [fullscreen, setFullscreen] = useState(false)
+  const [maximized, setMaximized] = useState(false)
   const [controlsVisible, setControlsVisible] = useState(true)
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [commentsStatus, setCommentsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -44,17 +45,17 @@ export default function NowPlaying() {
   const [commentsLoadingMore, setCommentsLoadingMore] = useState(false)
 
   useEffect(() => {
-    if (!expanded) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [expanded, close])
-
-  useEffect(() => {
     const api = window.electronAPI
     if (!api) return
     api.isFullscreen?.().then(setFullscreen).catch(() => {})
     return api.onFullscreenChange?.(setFullscreen)
+  }, [])
+
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api) return
+    api.isMaximized?.().then(setMaximized).catch(() => {})
+    return api.onMaximizedChange?.(setMaximized)
   }, [])
 
   useEffect(() => {
@@ -76,13 +77,63 @@ export default function NowPlaying() {
     }, 180)
   }
 
+  const exitFullscreenIfNeeded = useCallback(() => {
+    const fallback = () => {
+      if (!fullscreen) return
+      window.electronAPI?.toggleFullscreen?.()
+      setFullscreen(false)
+    }
+
+    const api = window.electronAPI
+    if (!api?.isFullscreen) {
+      fallback()
+      return
+    }
+
+    api.isFullscreen()
+      .then((isFullscreen) => {
+        if (!isFullscreen) return
+        api.toggleFullscreen?.()
+        setFullscreen(false)
+      })
+      .catch(fallback)
+  }, [fullscreen])
+
+  const collapseNowPlaying = useCallback(() => {
+    exitFullscreenIfNeeded()
+    close()
+  }, [close, exitFullscreenIfNeeded])
+
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') collapseNowPlaying() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [collapseNowPlaying, expanded])
+
+  const minimizeWindow = () => {
+    window.electronAPI?.minimize()
+  }
+
+  const toggleMaximize = () => {
+    window.electronAPI?.maximize()
+    window.electronAPI?.isMaximized?.()
+      .then(setMaximized)
+      .catch(() => {})
+    window.setTimeout(() => {
+      window.electronAPI?.isMaximized?.()
+        .then(setMaximized)
+        .catch(() => {})
+    }, 220)
+  }
+
   const closeToTray = () => {
     window.electronAPI?.close()
   }
 
   const openArtistSpace = () => {
     if (!track?.artist.trim()) return
-    close()
+    collapseNowPlaying()
     navigate('/search', { state: { openArtist: track.artist } })
   }
 
@@ -195,7 +246,7 @@ export default function NowPlaying() {
             <motion.button
               type="button"
               className="now-playing-close"
-              onClick={close}
+              onClick={collapseNowPlaying}
               title="收起 (Esc)"
               style={noDrag}
               whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
@@ -204,36 +255,60 @@ export default function NowPlaying() {
               <ChevronDown size={21} />
             </motion.button>
             <div className="now-playing-top__actions" style={noDrag}>
-              <motion.button
-                type="button"
-                className="now-playing-close"
-                onClick={openSourceVideo}
-                title="在浏览器中打开视频"
-                whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
-                whileTap={{ scale: 0.92 }}
-              >
-                <ExternalLink size={18} />
-              </motion.button>
-              <motion.button
-                type="button"
-                className="now-playing-close"
-                onClick={toggleFullscreen}
-                title={fullscreen ? '退出全屏' : '全屏'}
-                whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
-                whileTap={{ scale: 0.92 }}
-              >
-                {fullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-              </motion.button>
-              <motion.button
-                type="button"
-                className="now-playing-close"
-                onClick={closeToTray}
-                title="关闭到托盘"
-                whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
-                whileTap={{ scale: 0.92 }}
-              >
-                <X size={19} />
-              </motion.button>
+              <div className="now-playing-top__media-actions">
+                <motion.button
+                  type="button"
+                  className="now-playing-close"
+                  onClick={openSourceVideo}
+                  title="在浏览器中打开视频"
+                  whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
+                  whileTap={{ scale: 0.92 }}
+                >
+                  <ExternalLink size={18} />
+                </motion.button>
+                <motion.button
+                  type="button"
+                  className="now-playing-close"
+                  onClick={toggleFullscreen}
+                  title={fullscreen ? '退出全屏' : '全屏'}
+                  whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
+                  whileTap={{ scale: 0.92 }}
+                >
+                  {fullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                </motion.button>
+              </div>
+              <div className="now-playing-top__window-actions">
+                <motion.button
+                  type="button"
+                  className="now-playing-close"
+                  onClick={minimizeWindow}
+                  title="最小化"
+                  whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
+                  whileTap={{ scale: 0.92 }}
+                >
+                  <Minus size={18} />
+                </motion.button>
+                <motion.button
+                  type="button"
+                  className="now-playing-close"
+                  onClick={toggleMaximize}
+                  title={maximized ? '还原窗口' : '最大化'}
+                  whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
+                  whileTap={{ scale: 0.92 }}
+                >
+                  {maximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                </motion.button>
+                <motion.button
+                  type="button"
+                  className="now-playing-close"
+                  onClick={closeToTray}
+                  title="关闭到托盘"
+                  whileHover={{ y: 1, backgroundColor: 'rgba(255,255,255,0.18)' }}
+                  whileTap={{ scale: 0.92 }}
+                >
+                  <X size={19} />
+                </motion.button>
+              </div>
             </div>
           </header>
 
@@ -277,6 +352,17 @@ export default function NowPlaying() {
                   >
                     {track.artist}
                   </motion.button>
+                  {track.albumTitle && (
+                    <motion.div
+                      className="now-playing-album"
+                      title={track.albumTitle}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={spring}
+                    >
+                      <span>{track.albumTitle}</span>
+                    </motion.div>
+                  )}
                 </div>
                 <motion.button
                   type="button"
@@ -517,7 +603,7 @@ function LyricsPanel({
   lyrics, track, onSeek, currentTime,
 }: {
   lyrics: ReturnType<typeof useLyrics>
-  track: { title: string; artist: string }
+  track: { title: string; artist: string; albumTitle?: string }
   onSeek: (t: number) => void
   currentTime: number
 }) {

@@ -1,8 +1,9 @@
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import { ArrowLeft, ChevronRight, Loader2, Music, Play, Search, Sparkles, UserRound, Users, Video, X } from 'lucide-react'
 import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { usePlayer } from '@/contexts/PlayerContext'
+import { useRequestGate, type RequestGateSource } from '@/hooks/useRequestGate'
 import TrackActions from '@/components/TrackActions'
 import {
   searchVideo,
@@ -17,6 +18,10 @@ import type { Track } from '@/types'
 type SearchType = 'video' | 'user'
 type SelectedUser = { mid: number; name: string; avatar: string }
 type SearchRouteState = { openArtist?: string }
+
+const AUTO_LOAD_INTERVAL_MS = 500
+const AUTO_LOAD_ERROR_COOLDOWN_MS = 30000
+const MANUAL_LOAD_INTERVAL_MS = 500
 
 const pageMotion = {
   initial: { opacity: 0, y: 18 },
@@ -92,6 +97,7 @@ function searchItemToTrack(item: SearchItem): Track {
 
 export default function SearchPage() {
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const [query, setQuery] = useState('')
   const [searchType, setSearchType] = useState<SearchType>('video')
   const [resultType, setResultType] = useState<SearchType>('video')
@@ -113,6 +119,11 @@ export default function SearchPage() {
   const pageRootRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const loadingMoreRef = useRef(false)
+  const requestGate = useRequestGate({
+    autoIntervalMs: AUTO_LOAD_INTERVAL_MS,
+    manualIntervalMs: MANUAL_LOAD_INTERVAL_MS,
+    autoErrorCooldownMs: AUTO_LOAD_ERROR_COOLDOWN_MS,
+  })
 
   const clearSearch = useCallback(() => {
     setQuery('')
@@ -127,7 +138,8 @@ export default function SearchPage() {
     pageRef.current = 1
     totalPagesRef.current = 0
     currentQueryRef.current = ''
-  }, [])
+    requestGate.reset()
+  }, [requestGate])
 
   const executeSearch = useCallback(async (keyword: string, type: SearchType) => {
     if (!keyword.trim()) return
@@ -141,6 +153,7 @@ export default function SearchPage() {
     setUserResults([])
     pageRef.current = 1
     currentQueryRef.current = normalizedKeyword
+    requestGate.reset()
 
     try {
       if (type === 'video') {
@@ -161,7 +174,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [requestGate])
 
   const handleSearch = useCallback(async (typeArg?: SearchType) => {
     const keyword = query.trim()
@@ -201,6 +214,7 @@ export default function SearchPage() {
     pageRef.current = 1
     totalPagesRef.current = 0
     currentQueryRef.current = normalizedArtist
+    requestGate.reset()
 
     try {
       const data = await searchUsers(normalizedArtist, 1)
@@ -220,7 +234,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [requestGate])
 
   useEffect(() => {
     const artistName = (location.state as SearchRouteState | null)?.openArtist
@@ -229,10 +243,23 @@ export default function SearchPage() {
     openArtistSpace(artistName)
   }, [location.state, openArtistSpace])
 
-  const loadMore = useCallback(async () => {
+  useEffect(() => {
+    const keyword = (searchParams.get('q') || searchParams.get('keyword') || '').trim()
+    if (!keyword || currentQueryRef.current === keyword) return
+    const type = searchParams.get('type') === 'user' ? 'user' : 'video'
+    setQuery(keyword)
+    setSearchType(type)
+    executeSearch(keyword, type)
+  }, [executeSearch, searchParams])
+
+  const loadMore = useCallback(async (source: RequestGateSource = 'manual') => {
     const loadedCount = resultType === 'video' ? results.length : userResults.length
     const hasMore = !reachedEnd && (pageRef.current < totalPagesRef.current || loadedCount > 0 || (totalResults > 0 && loadedCount < totalResults))
     if (loading || loadingMore || loadingMoreRef.current || !currentQueryRef.current || !hasMore) return
+    if (!requestGate.canStart(source)) {
+      if (source === 'manual') setLoadMoreError('加载太频繁，请稍等一下再试。')
+      return
+    }
     loadingMoreRef.current = true
     setLoadingMore(true)
     setLoadMoreError(null)
@@ -254,12 +281,13 @@ export default function SearchPage() {
         setUserResults(prev => [...prev, ...data.items])
       }
     } catch (e: any) {
+      if (source === 'auto') requestGate.markAutoError()
       setLoadMoreError(e?.message || '加载更多失败')
     } finally {
       loadingMoreRef.current = false
       setLoadingMore(false)
     }
-  }, [loading, loadingMore, reachedEnd, resultType, results.length, totalResults, userResults.length])
+  }, [loading, loadingMore, reachedEnd, requestGate, resultType, results.length, totalResults, userResults.length])
 
   useEffect(() => {
     const sentinel = sentinelRef.current
@@ -276,22 +304,22 @@ export default function SearchPage() {
       if (!canLoadMore()) return
       if (pageRoot && scrollRoot) {
         const distance = pageRoot.getBoundingClientRect().bottom - scrollRoot.getBoundingClientRect().bottom
-        if (distance < 720) loadMore()
+        if (distance < 720) loadMore('auto')
         return
       }
       if (pageRoot) {
         const distance = pageRoot.getBoundingClientRect().bottom - window.innerHeight
-        if (distance < 720) loadMore()
+        if (distance < 720) loadMore('auto')
         return
       }
       const distance = sentinel.getBoundingClientRect().top - window.innerHeight
-      if (distance < 720) loadMore()
+      if (distance < 720) loadMore('auto')
     }
 
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && canLoadMore()) {
-          loadMore()
+          loadMore('auto')
         }
       },
       { root: scrollRoot, rootMargin: '520px 0px' },
@@ -431,8 +459,10 @@ export default function SearchPage() {
                   <VideoRow
                     key={result.bvid || result.aid}
                     track={searchItemToTrack(result)}
-                    subtitle={`${result.author} · ${formatCount(result.play)}播放`}
+                    artistName={result.author}
+                    playText={`${formatCount(result.play)}播放`}
                     durationText={result.duration}
+                    onArtistClick={() => openArtistSpace(result.author)}
                   />
                 ))}
               </motion.div>
@@ -453,13 +483,13 @@ export default function SearchPage() {
               </div>
             ) : loadMoreError && hasAnyResults ? (
               <div className="apple-search-end">
-                <button type="button" className="apple-search-retry" onClick={loadMore}>
+                <button type="button" className="apple-search-retry" onClick={() => loadMore('manual')}>
                   {loadMoreError}，点击重试
                 </button>
               </div>
             ) : hasMoreResults ? (
               <div className="apple-search-end">
-                <button type="button" className="apple-search-retry" onClick={loadMore}>
+                <button type="button" className="apple-search-retry" onClick={() => loadMore('manual')}>
                   继续加载更多
                 </button>
               </div>
@@ -507,13 +537,17 @@ function ResultsHeader({ query, total, mutedText }: { query: string; total: numb
   )
 }
 
-function VideoRow({ track, subtitle, durationText }: {
+function VideoRow({ track, subtitle, artistName, playText, durationText, onArtistClick }: {
   track: Track
-  subtitle: string
+  subtitle?: string
+  artistName?: string
+  playText?: string
   durationText?: string
+  onArtistClick?: () => void
 }) {
   const player = usePlayer()
   const isCurrent = player.currentTrack?.id === track.id
+  const metaText = subtitle || [artistName, playText].filter(Boolean).join(' · ')
 
   return (
     <motion.div
@@ -537,7 +571,24 @@ function VideoRow({ track, subtitle, durationText }: {
 
       <div className="apple-search-row__main">
         <div className="apple-search-row__title">{track.title}</div>
-        <div className="apple-search-row__meta">{subtitle}</div>
+        <div className="apple-search-row__meta">
+          {artistName && onArtistClick ? (
+            <>
+              <button
+                type="button"
+                className="apple-search-author-link"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onArtistClick()
+                }}
+                title={`查看 ${artistName} 的个人空间`}
+              >
+                {artistName}
+              </button>
+              {playText && <span> · {playText}</span>}
+            </>
+          ) : metaText}
+        </div>
       </div>
 
       {durationText && <span className="apple-search-duration">{durationText}</span>}
@@ -586,12 +637,18 @@ function UserSpaceView({ user, onBack }: { user: SelectedUser; onBack: () => voi
   const [total, setTotal] = useState(0)
   const pageRef = useRef(1)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const requestGate = useRequestGate({
+    autoIntervalMs: AUTO_LOAD_INTERVAL_MS,
+    manualIntervalMs: MANUAL_LOAD_INTERVAL_MS,
+    autoErrorCooldownMs: AUTO_LOAD_ERROR_COOLDOWN_MS,
+  })
   const player = usePlayer()
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     pageRef.current = 1
+    requestGate.reset()
     try {
       const data = await getUserVideos(user.mid, 1, 30)
       setVideos(data.items)
@@ -601,12 +658,13 @@ function UserSpaceView({ user, onBack }: { user: SelectedUser; onBack: () => voi
     } finally {
       setLoading(false)
     }
-  }, [user.mid])
+  }, [requestGate, user.mid])
 
   useEffect(() => { load() }, [load])
 
-  const loadMore = useCallback(async () => {
+  const loadMore = useCallback(async (source: RequestGateSource = 'auto') => {
     if (loadingMore || videos.length === 0 || videos.length >= total) return
+    if (!requestGate.canStart(source)) return
     setLoadingMore(true)
     try {
       const nextPage = pageRef.current + 1
@@ -614,17 +672,18 @@ function UserSpaceView({ user, onBack }: { user: SelectedUser; onBack: () => voi
       pageRef.current = nextPage
       setVideos(prev => [...prev, ...data.items])
     } catch {
+      if (source === 'auto') requestGate.markAutoError()
       // 追加失败不影响已经加载的投稿。
     } finally {
       setLoadingMore(false)
     }
-  }, [loadingMore, videos.length, total, user.mid])
+  }, [loadingMore, requestGate, videos.length, total, user.mid])
 
   useEffect(() => {
     const sentinel = sentinelRef.current
     if (!sentinel) return
     const observer = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) loadMore() },
+      (entries) => { if (entries[0].isIntersecting) loadMore('auto') },
       { rootMargin: '240px' },
     )
     observer.observe(sentinel)

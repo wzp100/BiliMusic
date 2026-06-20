@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { CheckSquare, Cloud, FolderPlus, ListMusic, Loader2, Music, Play, RefreshCw, Square, Trash2, X } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePlayer } from '@/contexts/PlayerContext'
-import AddToPlaylistButton from '@/components/AddToPlaylistButton'
+import { useRequestGate, type RequestGateSource } from '@/hooks/useRequestGate'
+import { useVisibleInterval } from '@/hooks/useVisibleInterval'
+import TrackActions from '@/components/TrackActions'
 import {
   EmptyLibrary,
   MusicHero,
@@ -12,7 +14,12 @@ import {
   TrackList,
   TrackListRow,
 } from '@/components/AppleMusicPage'
-import { getBiliFavoriteFolderCover, getBiliFavoriteFolderTracks, getBiliFavoriteFolders, type BiliFavoriteFolder } from '@/services/api'
+import {
+  BILI_FAVORITE_CACHE_TTL_MS,
+  getBiliFavoriteFolderTracks,
+  getBiliFavoriteFolders,
+  type BiliFavoriteFolder,
+} from '@/services/biliFavorites'
 import type { Track } from '@/types'
 import {
   addTracksToPlaylist,
@@ -23,6 +30,12 @@ import {
   removeTracksFromPlaylist,
 } from '@/utils/storage'
 import type { Playlist } from '@/types'
+
+const BILI_FAVORITE_PAGE_SIZE = 40
+const AUTO_LOAD_ROOT_MARGIN = '520px 0px'
+const AUTO_LOAD_INTERVAL_MS = 500
+const AUTO_LOAD_ERROR_COOLDOWN_MS = 30000
+const MANUAL_LOAD_INTERVAL_MS = 500
 
 export default function Playlists() {
   const { playlistId, favoriteId } = useParams()
@@ -35,6 +48,7 @@ function PlaylistOverview() {
   const [biliFolders, setBiliFolders] = useState<BiliFavoriteFolder[]>([])
   const [biliLoading, setBiliLoading] = useState(false)
   const [biliError, setBiliError] = useState('')
+  const biliLoadingRef = useRef(false)
   const { isLoggedIn } = useAuth()
 
   useEffect(() => {
@@ -47,49 +61,40 @@ function PlaylistOverview() {
     }
   }, [])
 
-  const loadBiliFolders = async () => {
+  const loadBiliFolders = useCallback(async (force = false) => {
+    if (biliLoadingRef.current) return
     if (!isLoggedIn) {
       setBiliFolders([])
       return
     }
+    biliLoadingRef.current = true
     setBiliLoading(true)
     setBiliError('')
     try {
-      const folders = await getBiliFavoriteFolders()
+      const folders = await getBiliFavoriteFolders(undefined, { force })
       setBiliFolders(folders)
-      hydrateBiliFolderCovers(folders)
     } catch {
       setBiliError('读取 B站收藏夹失败，请确认账号已登录且收藏夹可访问。')
     } finally {
+      biliLoadingRef.current = false
       setBiliLoading(false)
     }
-  }
-
-  useEffect(() => {
-    loadBiliFolders()
   }, [isLoggedIn])
 
-  const hydrateBiliFolderCovers = async (folders: BiliFavoriteFolder[]) => {
-    const missing = folders.filter((folder) => !folder.coverUrl && folder.mediaCount > 0)
-    for (const folder of missing) {
-      try {
-        const coverUrl = await getBiliFavoriteFolderCover(folder.id)
-        if (!coverUrl) continue
-        setBiliFolders((current) => current.map((item) => {
-          return item.id === folder.id ? { ...item, coverUrl } : item
-        }))
-      } catch {
-        // 个别收藏夹封面读取失败时保留默认图标，继续处理后续收藏夹。
-      }
-    }
-  }
+  useEffect(() => {
+    void loadBiliFolders()
+  }, [loadBiliFolders])
+
+  useVisibleInterval(() => {
+    void loadBiliFolders(true)
+  }, BILI_FAVORITE_CACHE_TTL_MS, isLoggedIn)
 
   const heroImage = biliFolders.find(folder => folder.coverUrl)?.coverUrl || playlists.find(p => p.coverUrl)?.coverUrl
 
   return (
     <MusicPageShell>
       <MusicHero
-        eyebrow="All Playlists"
+        eyebrow="All Songlists"
         title="所有歌单"
         subtitle={`B站收藏夹和本地歌单会一起显示在这里。${playlists.length ? `你创建了 ${playlists.length} 个本地歌单。` : ''}`}
         image={heroImage}
@@ -108,7 +113,7 @@ function PlaylistOverview() {
             <div>
               <span>{biliLoading ? '正在读取收藏夹' : `${biliFolders.length} 个收藏夹`}</span>
             </div>
-            <button type="button" className="playlist-editbar__primary" onClick={loadBiliFolders}>
+            <button type="button" className="playlist-editbar__primary" onClick={() => void loadBiliFolders(true)}>
               <RefreshCw size={16} />
               刷新
             </button>
@@ -257,7 +262,7 @@ function PlaylistDetail({ playlistId }: { playlistId: string }) {
   return (
     <MusicPageShell>
       <MusicHero
-        eyebrow="Playlist"
+        eyebrow="Songlist"
         title={playlist.name}
         subtitle={playlist.description || `${tracks.length} 首歌曲${updatedText ? ` · 更新于 ${updatedText}` : ''}`}
         image={heroImage}
@@ -330,7 +335,7 @@ function PlaylistDetail({ playlistId }: { playlistId: string }) {
                 ) : undefined}
                 extra={(
                   <div className="am-extra-actions">
-                    <AddToPlaylistButton track={track} size={15} />
+                    {!editing && <TrackActions track={track} size={15} />}
                     {!editing && (
                       <button className="am-icon-danger" onClick={(e) => { e.stopPropagation(); removeOne(track.id) }} title="移出歌单">
                         <X size={16} />
@@ -384,14 +389,14 @@ function BiliFavoriteImportDialog({
     }
   }, [])
 
-  const loadFolderTracks = async (folder: BiliFavoriteFolder) => {
+  const loadFolderTracks = async (folder: BiliFavoriteFolder, force = false) => {
     setActiveFolder(folder)
     setTracks([])
     setSelectedIds(new Set())
     setLoadingTracks(true)
     setError('')
     try {
-      const result = await getBiliFavoriteFolderTracks(folder.id)
+      const result = await getBiliFavoriteFolderTracks(folder.id, 1, 40, { force })
       setTracks(result.tracks)
       if (!result.tracks.length) setError('这个收藏夹里没有可加入的公开视频。')
     } catch {
@@ -440,7 +445,7 @@ function BiliFavoriteImportDialog({
                 type="button"
                 key={folder.id}
                 className={activeFolder?.id === folder.id ? 'is-active' : ''}
-                onClick={() => loadFolderTracks(folder)}
+                onClick={() => void loadFolderTracks(folder)}
               >
                 <strong>{folder.title}</strong>
                 <small>{folder.mediaCount} 个视频</small>
@@ -451,11 +456,19 @@ function BiliFavoriteImportDialog({
           <section className="bili-import-tracks">
             <div className="bili-import-toolbar">
               <span>{activeFolder ? activeFolder.title : '选择一个 B站收藏夹'}</span>
-              {selectableTracks.length > 0 && (
-                <button type="button" onClick={toggleAll}>
-                  {allSelected ? '取消全选' : '全选'}
-                </button>
-              )}
+              <div>
+                {activeFolder && (
+                  <button type="button" onClick={() => void loadFolderTracks(activeFolder, true)} disabled={loadingTracks}>
+                    <RefreshCw size={14} />
+                    刷新
+                  </button>
+                )}
+                {selectableTracks.length > 0 && (
+                  <button type="button" onClick={toggleAll}>
+                    {allSelected ? '取消全选' : '全选'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {loadingTracks ? (
@@ -505,12 +518,26 @@ function BiliFavoriteImportDialog({
 function BiliFavoriteDetail({ favoriteId }: { favoriteId: number }) {
   const [folder, setFolder] = useState<BiliFavoriteFolder | null>(null)
   const [tracks, setTracks] = useState<Track[]>([])
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
+  const [moreError, setMoreError] = useState('')
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const loadingRef = useRef(false)
+  const loadingMoreRef = useRef(false)
+  const requestGate = useRequestGate({
+    autoIntervalMs: AUTO_LOAD_INTERVAL_MS,
+    manualIntervalMs: MANUAL_LOAD_INTERVAL_MS,
+    autoErrorCooldownMs: AUTO_LOAD_ERROR_COOLDOWN_MS,
+  })
   const player = usePlayer()
   const { isLoggedIn, setShowLogin } = useAuth()
 
-  const loadTracks = async () => {
+  const loadTracks = useCallback(async (force = false) => {
+    if (loadingRef.current) return
+    loadingMoreRef.current = false
     if (!Number.isFinite(favoriteId) || favoriteId <= 0) {
       setLoading(false)
       setError('收藏夹地址无效。')
@@ -521,22 +548,77 @@ function BiliFavoriteDetail({ favoriteId }: { favoriteId: number }) {
       setError('需要先登录 Bilibili 才能读取收藏夹。')
       return
     }
+    loadingRef.current = true
     setLoading(true)
     setError('')
+    setMoreError('')
+    requestGate.reset()
     try {
-      const result = await getBiliFavoriteFolderTracks(favoriteId)
+      const result = await getBiliFavoriteFolderTracks(favoriteId, 1, BILI_FAVORITE_PAGE_SIZE, { force })
       setFolder(result.info || null)
       setTracks(result.tracks)
+      setPage(1)
+      setHasMore(result.hasMore && result.tracks.length > 0)
     } catch {
       setError('读取收藏夹内容失败，请确认该收藏夹存在且当前账号有权限访问。')
     } finally {
+      loadingRef.current = false
       setLoading(false)
     }
-  }
+  }, [favoriteId, isLoggedIn, requestGate])
 
   useEffect(() => {
-    loadTracks()
-  }, [favoriteId, isLoggedIn])
+    void loadTracks()
+  }, [loadTracks])
+
+  useVisibleInterval(() => {
+    void loadTracks(true)
+  }, BILI_FAVORITE_CACHE_TTL_MS, isLoggedIn && Number.isFinite(favoriteId) && favoriteId > 0)
+
+  const loadMoreTracks = useCallback(async (source: RequestGateSource = 'manual') => {
+    if (!hasMore || loading || loadingRef.current || loadingMoreRef.current) return
+    if (!requestGate.canStart(source)) {
+      if (source === 'manual') setMoreError('加载太频繁，请稍等一下再试。')
+      return
+    }
+
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    setMoreError('')
+    try {
+      const nextPage = page + 1
+      const result = await getBiliFavoriteFolderTracks(favoriteId, nextPage, BILI_FAVORITE_PAGE_SIZE)
+      setFolder((current) => result.info || current)
+      setTracks((current) => mergeUniqueTracks(current, result.tracks))
+      setPage(nextPage)
+      setHasMore(result.hasMore && result.tracks.length > 0)
+    } catch {
+      if (source === 'auto') requestGate.markAutoError()
+      setMoreError('加载更多收藏内容失败，请稍后再试。')
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
+  }, [favoriteId, hasMore, loading, page, requestGate])
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel || !hasMore || loading || error) return
+
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[0]
+      if (entry?.isIntersecting) {
+        loadMoreTracks('auto')
+      }
+    }, {
+      root: null,
+      rootMargin: AUTO_LOAD_ROOT_MARGIN,
+      threshold: 0,
+    })
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [error, hasMore, loadMoreTracks, loading])
 
   const heroImage = folder?.coverUrl || tracks[0]?.coverUrl
   const title = folder?.title || 'B站收藏夹'
@@ -560,7 +642,7 @@ function BiliFavoriteDetail({ favoriteId }: { favoriteId: number }) {
                 播放全部
               </button>
             )}
-            <button className="am-action am-action--subtle" onClick={isLoggedIn ? loadTracks : () => setShowLogin(true)}>
+            <button className="am-action am-action--subtle" onClick={isLoggedIn ? () => void loadTracks(true) : () => setShowLogin(true)}>
               <RefreshCw size={16} />
               {isLoggedIn ? '刷新' : '登录'}
             </button>
@@ -585,14 +667,35 @@ function BiliFavoriteDetail({ favoriteId }: { favoriteId: number }) {
                 onPlay={() => player.playNow(track)}
                 extra={(
                   <div className="am-extra-actions">
-                    <AddToPlaylistButton track={track} size={15} />
+                    <TrackActions track={track} size={15} />
                   </div>
                 )}
               />
             ))}
           </TrackList>
+          {hasMore && (
+            <div className="favorite-load-more">
+              <button type="button" className="am-action am-action--subtle" onClick={() => void loadMoreTracks('manual')} disabled={loadingMore}>
+                {loadingMore ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+                {loadingMore ? '正在加载' : '加载更多'}
+              </button>
+            </div>
+          )}
+          <div ref={sentinelRef} className="favorite-load-sentinel" aria-hidden="true" />
+          {moreError && <div className="favorite-load-error">{moreError}</div>}
         </MusicSection>
       )}
     </MusicPageShell>
   )
+}
+
+function mergeUniqueTracks(current: Track[], incoming: Track[]): Track[] {
+  const seen = new Set(current.map((track) => track.bvid || track.id))
+  const next = incoming.filter((track) => {
+    const key = track.bvid || track.id
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  return [...current, ...next]
 }

@@ -1,5 +1,6 @@
 import { useState, type CSSProperties, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 import {
   Play,
   Pause,
@@ -36,6 +37,7 @@ const sliderVars = {
 } as CSSProperties
 
 export default function PlayerBar() {
+  const navigate = useNavigate()
   const player = usePlayer()
   const { progress, duration, setProgress } = usePlayerProgress()
   const { open } = useNowPlaying()
@@ -43,6 +45,11 @@ export default function PlayerBar() {
   const [queueOpen, setQueueOpen] = useState(false)
   const trackDuration = duration || player.currentTrack?.duration || 0
   const remaining = Math.max(trackDuration - progress, 0)
+  const openArtistSpace = () => {
+    const artist = player.currentTrack?.artist.trim()
+    if (!artist) return
+    navigate('/search', { state: { openArtist: artist } })
+  }
 
   return (
     <motion.div
@@ -61,8 +68,8 @@ export default function PlayerBar() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 24px',
-        gap: 24,
+        padding: '0 clamp(8px, 1.6vw, 24px)',
+        gap: 'clamp(8px, 1vw, 24px)',
         flexShrink: 0,
         zIndex: 50,
         fontFamily:
@@ -79,13 +86,22 @@ export default function PlayerBar() {
           minWidth: 0,
         }}
       >
-        <motion.button
-          type="button"
+        <motion.div
+          className="player-mini-info"
           onClick={() => { if (player.currentTrack) open() }}
           title={player.currentTrack ? '查看歌词' : undefined}
           whileHover={player.currentTrack ? { backgroundColor: 'var(--player-hover)' } : undefined}
           whileTap={player.currentTrack ? { scale: 0.985 } : undefined}
           transition={{ duration: 0.2 }}
+          role={player.currentTrack ? 'button' : undefined}
+          tabIndex={player.currentTrack ? 0 : undefined}
+          onKeyDown={(e) => {
+            if (!player.currentTrack) return
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              open()
+            }
+          }}
           style={{
             minWidth: 0,
             flex: 1,
@@ -100,7 +116,7 @@ export default function PlayerBar() {
             cursor: player.currentTrack ? 'pointer' : 'default',
             textAlign: 'left',
             fontFamily: 'inherit',
-          }}
+          } as CSSProperties}
         >
           <motion.div
             whileHover={player.currentTrack ? { scale: 1.035 } : undefined}
@@ -173,17 +189,30 @@ export default function PlayerBar() {
                     fontWeight: 650,
                     lineHeight: 1.2,
                     overflow: 'hidden',
-                    textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {player.currentTrack.title}
+                  <span
+                    className="player-mini-title__marquee"
+                    title={player.currentTrack.title}
+                  >
+                    {player.currentTrack.title}
+                  </span>
                 </motion.div>
-                <motion.div
+                <motion.button
+                  type="button"
                   layoutId="np-artist"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openArtistSpace()
+                  }}
                   transition={{ type: 'spring', stiffness: 300, damping: 32 }}
+                  title={`查看 ${player.currentTrack.artist} 的个人空间`}
                   style={{
                     marginTop: 4,
+                    padding: 0,
+                    border: 'none',
+                    background: 'transparent',
                     color: 'var(--player-subtle-text)',
                     fontSize: 12,
                     fontWeight: 500,
@@ -191,10 +220,17 @@ export default function PlayerBar() {
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
+                    display: 'block',
+                    maxWidth: '100%',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    textAlign: 'left',
                   }}
+                  whileHover={{ color: 'var(--player-text)' }}
+                  whileTap={{ scale: 0.98 }}
                 >
                   {player.currentTrack.artist}
-                </motion.div>
+                </motion.button>
               </>
             ) : (
               <>
@@ -222,7 +258,7 @@ export default function PlayerBar() {
               </>
             )}
           </div>
-        </motion.button>
+        </motion.div>
 
         {player.currentTrack && (
           <>
@@ -250,7 +286,7 @@ export default function PlayerBar() {
         style={{
           flex: 1,
           maxWidth: 620,
-          minWidth: 280,
+          minWidth: 220,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -331,11 +367,11 @@ export default function PlayerBar() {
 
       <div
         style={{
-          width: 282,
+          width: 190,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
-          gap: 12,
+          gap: 8,
           flexShrink: 0,
         }}
       >
@@ -377,7 +413,7 @@ export default function PlayerBar() {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 9,
+            gap: 7,
             marginLeft: 2,
             ...sliderVars,
           } as CSSProperties}
@@ -397,7 +433,7 @@ export default function PlayerBar() {
               player.setVolume(Math.round(value))
               if (player.isMuted && value > 0) player.setIsMuted(false)
             }}
-            width={98}
+            width={76}
             step={5}
             variant="volume"
           />

@@ -34,10 +34,11 @@ export default function LyricsView({ lines, currentTime, synced, onSeek }: Lyric
   const [showScrollbar, setShowScrollbar] = useState(false)
 
   const active = synced ? activeIndexFor(lines, currentTime) : -1
-  const posIndex = Math.max(active, 0)
+  const posIndex = active >= 0 ? active : -1
 
   const scrollActiveLineIntoView = () => {
     const vp = viewportRef.current
+    if (posIndex < 0) return
     const el = lineRefs.current[posIndex]
     if (!vp || !el) return
     const nextTop = el.offsetTop + el.offsetHeight / 2 - vp.clientHeight / 2
@@ -87,7 +88,7 @@ export default function LyricsView({ lines, currentTime, synced, onSeek }: Lyric
           overflowX: 'hidden',
           maskImage: fade,
           WebkitMaskImage: fade,
-          padding: '12% 4px',
+          padding: '12% 14px 12% 4px',
         }}
       >
         {lines.map((l, i) => (
@@ -102,6 +103,9 @@ export default function LyricsView({ lines, currentTime, synced, onSeek }: Lyric
               lineHeight: 1.7,
               color: 'rgba(255,255,255,0.72)',
               margin: '0 0 6px',
+              maxWidth: '100%',
+              overflowWrap: 'anywhere',
+              wordBreak: 'break-word',
             }}
           >
             {l.text}
@@ -136,7 +140,7 @@ export default function LyricsView({ lines, currentTime, synced, onSeek }: Lyric
       >
         {lines.map((l, i) => {
           const isActive = i === active
-          const dist = Math.abs(i - posIndex)
+          const dist = posIndex >= 0 ? Math.abs(i - posIndex) : Number.POSITIVE_INFINITY
           const isNear = dist === 1
           return (
             <motion.div
@@ -145,8 +149,8 @@ export default function LyricsView({ lines, currentTime, synced, onSeek }: Lyric
               onClick={() => onSeek(l.time)}
               animate={{
                 opacity: isActive ? 1 : isNear ? 0.46 : 0.22,
-                scale: isActive ? 1.075 : isNear ? 1.015 : 0.985,
-                x: isActive ? 14 : isNear ? 4 : 0,
+                scale: isActive ? 1.045 : isNear ? 1.01 : 0.985,
+                x: isActive ? 8 : isNear ? 3 : 0,
                 filter: isActive ? 'blur(0px)' : isNear ? 'blur(0.5px)' : 'blur(1.5px)',
               }}
               transition={{
@@ -157,6 +161,7 @@ export default function LyricsView({ lines, currentTime, synced, onSeek }: Lyric
               }}
               style={{
                 transformOrigin: 'left center',
+                maxWidth: 'calc(100% - 28px)',
                 cursor: 'pointer',
                 color: '#fff',
                 fontSize: 'clamp(1.46rem, 2.4vw, 2.42rem)',
@@ -164,6 +169,9 @@ export default function LyricsView({ lines, currentTime, synced, onSeek }: Lyric
                 lineHeight: 1.38,
                 padding: '10px 8px',
                 margin: 0,
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
+                whiteSpace: 'normal',
                 textShadow: isActive ? '0 8px 34px rgba(0,0,0,0.44), 0 0 26px rgba(255,255,255,0.1)' : 'none',
               }}
             >
