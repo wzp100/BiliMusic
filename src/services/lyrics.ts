@@ -222,6 +222,21 @@ function hasLyricContent(result: LyricResult): boolean {
   return result.instrumental || result.lines.length > 0
 }
 
+const SUBTITLE_PLACEHOLDER = /^(?:音乐|音樂|纯音乐|純音樂|背景音乐|背景音樂|歌曲|演奏|music|bgm|instrumental)+$/i
+
+function isPlaceholderSubtitle(result: LyricResult): boolean {
+  const lines = result.lines
+    .map((line) => norm(line.text))
+    .filter(Boolean)
+  if (lines.length < 3) return false
+
+  const placeholders = lines.filter((line) => SUBTITLE_PLACEHOLDER.test(line))
+  if (placeholders.length < 3) return false
+
+  const meaningfulCount = lines.length - placeholders.length
+  return placeholders.length / lines.length >= 0.35 || meaningfulCount <= 2
+}
+
 function maxAutoDurationDiff(duration: number): number {
   if (duration <= 0) return Number.POSITIVE_INFINITY
   return Math.max(8, Math.min(30, duration * 0.08))
@@ -364,6 +379,7 @@ function lyricCacheKey(track: Track): string {
 
 function isCachedLyricCompatible(track: Track, result: LyricResult): boolean {
   if (result.sourceId.startsWith('bili-subtitle-v2:')) {
+    if (isPlaceholderSubtitle(result)) return false
     if (!track.cid) return true
     const bvid = track.bvid || track.id
     return result.sourceId.startsWith(`bili-subtitle-v2:${bvid}:${track.cid}:`)
@@ -415,9 +431,10 @@ export async function getLyricForTrack(track: Track): Promise<LyricResult | null
       sourceId: subtitle.sourceId,
     }
     const cleanedResult = cleanLyricResult(result)
-    if (!hasLyricContent(cleanedResult)) return null
-    cacheOk(cacheKey, cleanedResult)
-    return cleanedResult
+    if (hasLyricContent(cleanedResult) && !isPlaceholderSubtitle(cleanedResult)) {
+      cacheOk(cacheKey, cleanedResult)
+      return cleanedResult
+    }
   }
 
   if (entry?.status === 'miss' && Date.now() - entry.ts < MISS_TTL) return null
@@ -451,7 +468,7 @@ export async function chooseOfficialSubtitle(track: Track, subtitleId: string): 
     sourceId: subtitle.sourceId,
   }
   const cleanedResult = cleanLyricResult(result)
-  if (!hasLyricContent(cleanedResult)) return null
+  if (!hasLyricContent(cleanedResult) || isPlaceholderSubtitle(cleanedResult)) return null
   cacheOk(lyricCacheKey(track), cleanedResult)
   return cleanedResult
 }
