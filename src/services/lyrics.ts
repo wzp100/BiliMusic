@@ -10,7 +10,7 @@ import {
   getBiliOfficialSubtitle,
   getBiliOfficialSubtitleOptions,
   type OfficialSubtitleOption,
-} from '@/services/api'
+} from '@/services/biliSubtitles'
 
 export interface LyricLine {
   time: number
@@ -89,6 +89,8 @@ const LATIN_NOISE = /\b(official|lyrics?|audio|video|m\/?v|mv|hd|4k|8k|live|cove
 const SEP = /[-–—_|/\\·•～~「」『』"'`*:：，,;；]/g
 const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/gu
 const CJK_QUOTE = /[《<]([^》>]+)[》>]/g
+const MUSIC_NOTES = /[♪♫♬♩♭♮♯]+/g
+const LEADING_TRACK_NO = /^(?:p\s*)?\d{1,4}\s*(?:[.)、．:：-]|集|首)\s*/i
 
 function uniqPush(list: string[], value: string) {
   const v = value.replace(/\s+/g, ' ').trim()
@@ -98,6 +100,7 @@ function uniqPush(list: string[], value: string) {
 function cleanSeg(raw: string): string {
   if (!raw) return ''
   let s = raw.normalize('NFKC')
+  s = s.replace(LEADING_TRACK_NO, ' ')
   s = s.replace(/#[^\s#]+/g, ' ')
   s = s.replace(EMOJI, ' ')
   s = s.replace(/[!！?？.。]+/g, ' ')
@@ -178,7 +181,7 @@ export function parseLrc(lrc: string): LyricLine[] {
       times.push(min * 60 + sec + frac)
     }
     if (!times.length) continue
-    const text = rawLine.replace(TIME_TAG, '').trim()
+    const text = cleanLyricText(rawLine.replace(TIME_TAG, ''))
     if (!text || META_LINE.test(text)) continue
     for (const t of times) out.push({ time: t, text })
   }
@@ -188,10 +191,47 @@ export function parseLrc(lrc: string): LyricLine[] {
 function plainToLines(plain: string): LyricLine[] {
   return plain
     .split('\n')
-    .map((t) => t.trim())
+    .map(cleanLyricText)
     .filter(Boolean)
     .filter((t) => !META_LINE.test(t.replace(/^\[[^\]]+]/, '')))
     .map((text) => ({ time: -1, text }))
+}
+
+function cleanLyricText(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(MUSIC_NOTES, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function cleanLyricLines(lines: LyricLine[]): LyricLine[] {
+  return lines
+    .map((line) => ({ ...line, text: cleanLyricText(line.text) }))
+    .filter((line) => line.text.length > 0)
+}
+
+function cleanLyricResult(result: LyricResult): LyricResult {
+  return {
+    ...result,
+    lines: cleanLyricLines(result.lines),
+  }
+}
+
+function hasLyricContent(result: LyricResult): boolean {
+  return result.instrumental || result.lines.length > 0
+}
+
+function maxAutoDurationDiff(duration: number): number {
+  if (duration <= 0) return Number.POSITIVE_INFINITY
+  return Math.max(8, Math.min(30, duration * 0.08))
+}
+
+function isAutoDurationCompatible(trackDuration: number, candidateDuration: number): boolean {
+  if (trackDuration <= 0) return true
+  if (candidateDuration <= 0) return false
+  if (trackDuration > 900 && candidateDuration < 600) return false
+  return Math.abs(trackDuration - candidateDuration) <= maxAutoDurationDiff(trackDuration)
 }
 
 // ===== 相似度 / 候选排序 =====
@@ -230,7 +270,6 @@ function scoreCandidate(c: LyricCandidate, ctx: { rawTitle: string; clean: strin
   const quotedScore = Math.max(0, ...ctx.quoted.map(q => dice(c.trackName, q)))
   let score = 0
   score += normIncludes(ctx.rawTitle, c.trackName) ? 360 : dice(c.trackName, ctx.clean) * 180
-  score += normIncludes(ctx.rawTitle, c.artistName) ? 280 : 0
   score += quotedScore * 300
   score += c.albumName && normIncludes(ctx.rawTitle, c.albumName) ? 40 : 0
 
@@ -266,9 +305,10 @@ async function searchBestCandidate(track: Track): Promise<LyricCandidate | null>
     quoted: quotedTitles(track.title),
   }
 
-  const best = [...seen.values()]
+  const ranked = [...seen.values()]
     .map(candidate => ({ candidate, score: scoreCandidate(candidate, ctx) }))
-    .sort((a, b) => b.score - a.score)[0]
+    .sort((a, b) => b.score - a.score)
+  const best = ranked.find((row) => isAutoDurationCompatible(track.duration || 0, row.candidate.duration || 0))
 
   if (!best) return null
   if (best.score < 120 && !normIncludes(track.title, best.candidate.trackName)) return null
@@ -314,27 +354,55 @@ function writeCache(map: Record<string, CacheEntry>): void {
   }
 }
 
-function cacheOk(trackId: string, result: LyricResult): void {
+function lyricCacheKey(track: Track): string {
+  return [
+    track.id || track.bvid || '',
+    track.bvid || '',
+    track.cid ? `cid:${track.cid}` : 'cid:',
+  ].join('|')
+}
+
+function isCachedLyricCompatible(track: Track, result: LyricResult): boolean {
+  if (result.sourceId.startsWith('bili-subtitle-v2:')) {
+    if (!track.cid) return true
+    const bvid = track.bvid || track.id
+    return result.sourceId.startsWith(`bili-subtitle-v2:${bvid}:${track.cid}:`)
+  }
+  if (result.sourceId.startsWith('bili-subtitle:')) return false
+
+  return normIncludes(track.title, result.trackName)
+    || normIncludes(result.trackName, track.title)
+    || dice(track.title, result.trackName) >= 0.72
+}
+
+function cacheOk(cacheKey: string, result: LyricResult): void {
   const map = readCache()
-  map[trackId] = { status: 'ok', result }
+  map[cacheKey] = { status: 'ok', result: cleanLyricResult(result) }
   writeCache(map)
 }
 
-function cacheMiss(trackId: string): void {
+function cacheMiss(cacheKey: string): void {
   const map = readCache()
-  map[trackId] = { status: 'miss', ts: Date.now() }
+  map[cacheKey] = { status: 'miss', ts: Date.now() }
   writeCache(map)
 }
 
-export function clearLyricCache(trackId: string): void {
+export function clearLyricCache(track: Track): void {
   const map = readCache()
-  delete map[trackId]
+  delete map[lyricCacheKey(track)]
   writeCache(map)
 }
 
 export async function getLyricForTrack(track: Track): Promise<LyricResult | null> {
-  const entry = readCache()[track.id]
-  if (entry?.status === 'ok' && entry.result.sourceId.startsWith('bili-subtitle:')) return entry.result
+  const cacheKey = lyricCacheKey(track)
+  const entry = readCache()[cacheKey]
+  if (entry?.status === 'ok') {
+    const cachedResult = cleanLyricResult(entry.result)
+    if (hasLyricContent(cachedResult) && isCachedLyricCompatible(track, cachedResult)) {
+      return cachedResult
+    }
+    clearLyricCache(track)
+  }
 
   const subtitle = await getBiliOfficialSubtitle(track)
   if (subtitle) {
@@ -346,22 +414,25 @@ export async function getLyricForTrack(track: Track): Promise<LyricResult | null
       artistName: track.artist,
       sourceId: subtitle.sourceId,
     }
-    cacheOk(track.id, result)
-    return result
+    const cleanedResult = cleanLyricResult(result)
+    if (!hasLyricContent(cleanedResult)) return null
+    cacheOk(cacheKey, cleanedResult)
+    return cleanedResult
   }
 
-  if (entry?.status === 'ok') return entry.result
   if (entry?.status === 'miss' && Date.now() - entry.ts < MISS_TTL) return null
 
   const candidate = await searchBestCandidate(track)
-  if (!candidate) { cacheMiss(track.id); return null }
+  if (!candidate) { cacheMiss(cacheKey); return null }
 
   const content = await oiGetLyric(candidate.songId)
   const result = lyricToResult(candidate, content)
-  if (!result) { cacheMiss(track.id); return null }
+  if (!result) { cacheMiss(cacheKey); return null }
 
-  cacheOk(track.id, result)
-  return result
+  const cleanedResult = cleanLyricResult(result)
+  if (!hasLyricContent(cleanedResult)) { cacheMiss(cacheKey); return null }
+  cacheOk(cacheKey, cleanedResult)
+  return cleanedResult
 }
 
 export async function getOfficialSubtitleCandidates(track: Track): Promise<OfficialSubtitleOption[]> {
@@ -379,8 +450,10 @@ export async function chooseOfficialSubtitle(track: Track, subtitleId: string): 
     artistName: track.artist,
     sourceId: subtitle.sourceId,
   }
-  cacheOk(track.id, result)
-  return result
+  const cleanedResult = cleanLyricResult(result)
+  if (!hasLyricContent(cleanedResult)) return null
+  cacheOk(lyricCacheKey(track), cleanedResult)
+  return cleanedResult
 }
 
 export async function searchLyricCandidates(query: string): Promise<LyricCandidate[]> {
@@ -389,9 +462,12 @@ export async function searchLyricCandidates(query: string): Promise<LyricCandida
   return oiSearch(q, 20)
 }
 
-export async function chooseLyricCandidate(trackId: string, record: LyricCandidate): Promise<LyricResult | null> {
+export async function chooseLyricCandidate(track: Track, record: LyricCandidate): Promise<LyricResult | null> {
   const content = await oiGetLyric(record.songId)
   const result = lyricToResult(record, content)
-  if (result) cacheOk(trackId, result)
-  return result
+  if (!result) return null
+  const cleanedResult = cleanLyricResult(result)
+  if (!hasLyricContent(cleanedResult)) return null
+  cacheOk(lyricCacheKey(track), cleanedResult)
+  return cleanedResult
 }

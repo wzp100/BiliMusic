@@ -367,6 +367,7 @@ export interface VideoStat {
 
 export interface VideoPage {
   cid: number
+  page?: number
   part: string
   duration: number
 }
@@ -648,6 +649,50 @@ export async function getFollowingDynamicVideos(
   })
 }
 
+// ===== 官方观看历史 =====
+
+export interface HistoryCursor {
+  max?: number
+  view_at?: number
+  business?: string
+}
+
+export interface HistoryItem {
+  title: string
+  author_name: string
+  author_mid: number
+  cover: string
+  duration: number
+  progress: number
+  view_at: number
+  history?: {
+    oid?: number
+    bvid?: string
+    business?: string
+    page?: number
+    cid?: number
+  }
+}
+
+export interface HistoryCursorData {
+  cursor?: HistoryCursor
+  list?: HistoryItem[]
+}
+
+export async function getHistoryCursor(
+  cursor: HistoryCursor = {},
+  pageSize = 30,
+): Promise<HistoryCursorData> {
+  return biliFetch('/x/web-interface/history/cursor', {
+    params: {
+      max: cursor.max || 0,
+      view_at: cursor.view_at || 0,
+      business: cursor.business || '',
+      ps: pageSize,
+    },
+  })
+}
+
 // ===== 官方字幕 =====
 
 export interface PlayerSubtitleItem {
@@ -671,9 +716,22 @@ export async function getVideoSubtitleList(
   bvid: string,
   cid: string | number,
 ): Promise<PlayerSubtitleItem[]> {
-  const data = await biliFetch<{ subtitle?: { subtitles?: PlayerSubtitleItem[] } }>('/x/player/v2', {
-    params: { bvid, cid },
+  const query = await encodeWbi({
+    bvid,
+    cid,
+    isGaiaAvoided: 'false',
+    web_location: 1315873,
   })
+  const resp = await fetch(`${BILI_API}/x/player/wbi/v2?${query}`, {
+    credentials: 'include',
+    cache: 'no-store',
+    headers: { Referer: `https://www.bilibili.com/video/${bvid}` },
+  })
+  const payload = await parseBiliJson(resp, '/x/player/wbi/v2')
+  if (payload.code !== 0) {
+    throw new BiliApiError(payload.code, payload.message, '/x/player/wbi/v2')
+  }
+  const data = payload.data as { subtitle?: { subtitles?: PlayerSubtitleItem[] } }
   return data.subtitle?.subtitles || []
 }
 
@@ -743,6 +801,7 @@ export interface FavoriteFolder {
 }
 
 export async function getFavoriteFolders(mid: number): Promise<{ count: number; list: FavoriteFolder[] }> {
+  if (window.electronAPI?.biliApi) return window.electronAPI.biliApi.favorites(mid)
   return biliFetch('/x/v3/fav/folder/created/list-all', { params: { up_mid: mid } })
 }
 
@@ -795,6 +854,14 @@ export async function getFavoriteFolderMedias(
   })
 }
 
+export async function addVideoToFavoriteFolder(rid: number, mediaId: number): Promise<void> {
+  if (window.electronAPI?.biliApi) {
+    await window.electronAPI.biliApi.favoriteResourceDeal(rid, mediaId)
+    return
+  }
+  throw new Error('当前环境暂不支持写入 B站收藏夹，请在桌面端登录后重试。')
+}
+
 // ===== 完整流程：搜索 → 详情 → 音频 =====
 
 export interface TrackSource {
@@ -840,12 +907,13 @@ export async function extractAudioFromVideo(
 ): Promise<TrackSource> {
   try {
     const detail = await getVideoDetail(bvid)
+    const playCid = fallback?.cid || detail.cid
     let playData: PlayUrlData
     try {
-      playData = await getPlayUrl(bvid, detail.cid)
+      playData = await getPlayUrl(bvid, Number(playCid))
     } catch {
       playData = await biliFetch<PlayUrlData>('/x/player/playurl', {
-        params: { avid: detail.aid, cid: detail.cid, qn: 0, fnver: 0, fnval: 16, fourk: 1 },
+        params: { avid: detail.aid, cid: playCid, qn: 0, fnver: 0, fnval: 16, fourk: 1 },
       })
     }
     const audioUrl = getBestAudioUrl(playData)
@@ -855,7 +923,7 @@ export async function extractAudioFromVideo(
     return {
       bvid: detail.bvid,
       aid: detail.aid,
-      cid: detail.cid,
+      cid: Number(playCid) || detail.cid,
       title: detail.title,
       artist: detail.owner.name,
       coverUrl: toHttpsUrl(detail.pic),

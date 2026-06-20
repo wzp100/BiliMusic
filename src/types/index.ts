@@ -2,6 +2,7 @@ export interface Track {
   id: string
   title: string
   artist: string
+  albumTitle?: string
   coverUrl: string
   duration: number
   videoUrl: string

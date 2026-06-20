@@ -22,6 +22,9 @@ export function useLyrics(track: Track | null, enabled: boolean) {
   const [status, setStatus] = useState<LyricStatus>('idle')
   const [result, setResult] = useState<LyricResult | null>(null)
   const reqIdRef = useRef(0)
+  const trackKey = track
+    ? `${track.id}:${track.bvid || ''}:${track.cid || ''}:${track.title}`
+    : ''
 
   const load = useCallback(async (t: Track) => {
     const reqId = ++reqIdRef.current
@@ -41,16 +44,16 @@ export function useLyrics(track: Track | null, enabled: boolean) {
   useEffect(() => {
     if (!enabled || !track) return
     load(track)
-    // 仅在曲目切换或启用时重取
+    // 仅在曲目或官方字幕定位信息变化时重取
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, track?.id])
+  }, [enabled, trackKey])
 
   const search = useCallback((q: string): Promise<LyricCandidate[]> => searchLyricCandidates(q), [])
 
   const choose = useCallback(async (record: LyricCandidate) => {
     if (!track) return
     setStatus('loading')
-    const res = await chooseLyricCandidate(track.id, record)
+    const res = await chooseLyricCandidate(track, record)
     if (!res) {
       setStatus('empty')
       setResult(null)
@@ -81,7 +84,7 @@ export function useLyrics(track: Track | null, enabled: boolean) {
 
   const retry = useCallback(() => {
     if (!track) return
-    clearLyricCache(track.id)
+    clearLyricCache(track)
     load(track)
   }, [track, load])
 

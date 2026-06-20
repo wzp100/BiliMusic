@@ -14,28 +14,39 @@ export default function MainLayout() {
         width: '100vw',
       }}
     >
-      <TitleBar />
-
       <div
         style={{
           display: 'flex',
           flex: 1,
+          minHeight: 0,
           overflow: 'hidden',
         }}
       >
         <Sidebar />
 
-        <main
+        <div
           style={{
+            display: 'flex',
+            flexDirection: 'column',
             flex: 1,
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            background: 'var(--color-background)',
-            padding: 'var(--space-lg) var(--space-xl)',
+            minWidth: 0,
+            overflow: 'hidden',
           }}
         >
-          <Outlet />
-        </main>
+          <TitleBar />
+
+          <main
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              background: 'var(--color-background)',
+              padding: 'var(--space-lg) var(--space-xl)',
+            }}
+          >
+            <Outlet />
+          </main>
+        </div>
       </div>
 
       <PlayerBar />

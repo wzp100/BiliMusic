@@ -6,6 +6,7 @@ interface BiliApi {
   popular: (ps?: number, pn?: number) => Promise<any>
   recommend: (ps?: number) => Promise<any>
   favorites: (mid: number) => Promise<any>
+  favoriteResourceDeal: (rid: number, mediaId: number) => Promise<any>
   extractAudio: (bvid: string) => Promise<{
     bvid: string
     aid: number
@@ -75,6 +76,7 @@ export interface TrayPlayerState {
   hasTrack: boolean
   title: string
   artist: string
+  albumTitle?: string
   coverUrl: string
   isPlaying: boolean
   queueLength: number

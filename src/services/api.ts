@@ -6,7 +6,34 @@
  */
 
 import type { TrackSource } from '@/services/bilibiliApi'
+import type { VideoInfo } from '@/services/biliTypes'
+import { normalizeBiliImageUrl } from '@/services/media'
 import type { Track } from '@/types'
+
+export type { VideoInfo } from '@/services/biliTypes'
+
+interface VideoPageTrackCacheEntry {
+  ts: number
+  detail: {
+    bvid: string
+    aid: number
+    title: string
+    pic: string
+    ownerName: string
+    duration: number
+    cid: number
+    playCount: number
+  }
+  pages: Array<{
+    cid: number
+    page?: number
+    part: string
+    duration: number
+  }>
+}
+
+const VIDEO_PAGE_TRACK_CACHE_TTL_MS = 5 * 60 * 1000
+const videoPageTrackCache = new Map<string, VideoPageTrackCacheEntry>()
 
 function isElectron(): boolean {
   return !!window.electronAPI?.biliApi
@@ -42,25 +69,7 @@ export interface SearchItem {
   pic: string
 }
 
-function normalizePic(pic: string): string {
-  if (!pic) return ''
-  const normalized = pic.startsWith('https://')
-    ? pic
-    : pic.startsWith('http://')
-      ? pic.replace('http://', 'https://')
-      : pic.startsWith('//')
-        ? `https:${pic}`
-        : `https:${pic}`
-  if (
-    typeof window !== 'undefined'
-    && !window.electronAPI?.biliApi
-    && ['localhost', '127.0.0.1'].includes(window.location.hostname)
-    && /https:\/\/i\d+\.hdslb\.com\//.test(normalized)
-  ) {
-    return `${window.location.origin}/bili-image/${normalized.replace(/^https?:\/\//, 'https:/')}`
-  }
-  return normalized
-}
+const normalizePic = normalizeBiliImageUrl
 
 export async function searchVideo(keyword: string, page = 1, pageSize = 20): Promise<{ items: SearchItem[]; totalPages: number; totalResults: number }> {
   const mapItem = (item: any): SearchItem => ({
@@ -86,22 +95,70 @@ export async function searchVideo(keyword: string, page = 1, pageSize = 20): Pro
 
 // ===== 视频详情 =====
 
-export interface VideoInfo {
-  bvid: string
-  aid: number
-  audioUrl?: string
-  title: string
-  desc: string
-  pic: string
-  ownerName: string
-  ownerMid: number
-  duration: number
-  cid: number
-  stat: {
-    view: number
-    like: number
-    favorite: number
+export async function getVideoPageTracks(track: Track): Promise<Track[]> {
+  const bvid = track.bvid || track.id
+  if (!bvid) return [track]
+  const cached = videoPageTrackCache.get(bvid)
+  if (cached && Date.now() - cached.ts < VIDEO_PAGE_TRACK_CACHE_TTL_MS) {
+    return buildVideoPageTracks(track, cached)
   }
+
+  const { getVideoDetail: rendererDetail } = await import('@/services/bilibiliApi')
+  const detail = await rendererDetail(bvid)
+  const entry: VideoPageTrackCacheEntry = {
+    ts: Date.now(),
+    detail: {
+      bvid: detail.bvid,
+      aid: detail.aid,
+      title: detail.title,
+      pic: detail.pic,
+      ownerName: detail.owner?.name || '',
+      duration: detail.duration,
+      cid: detail.cid,
+      playCount: detail.stat?.view || 0,
+    },
+    pages: (detail.pages || []).map((page) => ({
+      cid: page.cid,
+      page: page.page,
+      part: page.part,
+      duration: page.duration,
+    })),
+  }
+  videoPageTrackCache.set(bvid, entry)
+  return buildVideoPageTracks(track, entry)
+}
+
+function buildVideoPageTracks(track: Track, entry: VideoPageTrackCacheEntry): Track[] {
+  const pages = entry.pages || []
+  const albumTitle = entry.detail.title || track.albumTitle || track.title
+  if (pages.length <= 1) {
+    return [{
+      ...track,
+      albumTitle,
+      aid: track.aid || entry.detail.aid,
+      cid: track.cid || entry.detail.cid,
+      duration: track.duration || entry.detail.duration,
+    }]
+  }
+
+  return pages.map((page, index) => {
+    const pageNumber = page.page || index + 1
+    const pageTitle = page.part && page.part !== entry.detail.title ? page.part : `P${pageNumber}`
+    return {
+      id: `${entry.detail.bvid}-p${pageNumber}`,
+      title: pageTitle,
+      artist: entry.detail.ownerName || track.artist || 'Bilibili 用户',
+      albumTitle,
+      coverUrl: normalizePic(entry.detail.pic || track.coverUrl || ''),
+      duration: page.duration || track.duration || 0,
+      videoUrl: `https://www.bilibili.com/video/${entry.detail.bvid}?p=${pageNumber}`,
+      bvid: entry.detail.bvid,
+      aid: entry.detail.aid,
+      cid: page.cid,
+      playCount: entry.detail.playCount || track.playCount || 0,
+      isLiked: track.isLiked,
+    }
+  })
 }
 
 export async function getVideoDetail(bvid: string): Promise<VideoInfo> {
@@ -214,191 +271,6 @@ export async function getUserInfo(): Promise<{ isLogin: boolean; mid: number; un
   }
 }
 
-// ===== 音乐排行榜 =====
-
-export async function getMusicRanking(): Promise<VideoInfo[]> {
-  const parseItem = (v: any): VideoInfo => {
-    const dur = typeof v.duration === 'string'
-      ? v.duration.split(':').reduce((acc: number, t: string) => acc * 60 + parseInt(t), 0)
-      : (v.duration || 0)
-    return {
-      bvid: v.bvid,
-      aid: v.aid,
-      title: v.title,
-      desc: v.description || v.desc || '',
-      pic: normalizePic(v.pic),
-      ownerName: v.author || v.owner?.name || '',
-      ownerMid: v.mid || v.owner?.mid || 0,
-      duration: dur,
-      cid: v.cid || 0,
-      stat: {
-        view: v.play || v.stat?.view || 0,
-        like: v.stat?.like || 0,
-        favorite: v.favorites || v.stat?.favorite || 0,
-      },
-    }
-  }
-
-  // 来源：https://www.bilibili.com/v/popular/rank/music
-  // 该页面当前由 /x/web-interface/ranking/v2?rid=1003&type=all 注水。
-  const { getMusicPopularRank } = await import('@/services/bilibiliApi')
-  const data = await getMusicPopularRank()
-  return (data.list || []).map(parseItem)
-}
-
-export async function getMusicChannelRecommendations(page = 1, pageSize = 20): Promise<VideoInfo[]> {
-  const parseItem = (v: any): VideoInfo => ({
-    bvid: v.bvid,
-    aid: v.aid,
-    title: v.title,
-    desc: v.description || v.desc || '',
-    pic: normalizePic(v.pic || v.cover || ''),
-    ownerName: v.author || v.owner?.name || '',
-    ownerMid: v.mid || v.owner?.mid || 0,
-    duration: typeof v.duration === 'string' ? parseLength(v.duration) : (v.duration || 0),
-    cid: v.cid || 0,
-    stat: {
-      view: v.play || v.stat?.view || 0,
-      like: v.stat?.like || 0,
-      favorite: v.favorites || v.stat?.favorite || 0,
-    },
-  })
-
-  const { getMusicChannelDynamic, getRecommendedVideos: rendererRec } = await import('@/services/bilibiliApi')
-  try {
-    const data = await getMusicChannelDynamic(page, pageSize)
-    const list = data.archives || []
-    if (list.length) return list.map(parseItem)
-  } catch {
-    // 音乐频道抓取失败时保留原推荐接口兜底。
-  }
-
-  const fallback = await rendererRec(pageSize)
-  return (fallback.item || []).map(parseItem)
-}
-
-// ===== 音乐中心（music.bilibili.com/pc/music-center 同源数据） =====
-
-export interface MusicSong {
-  bvid: string
-  aid: string
-  cid: string
-  title: string
-  artist: string
-  coverUrl: string
-  album: string
-  publishTime?: string
-}
-
-// 综合榜顶层 bvid 是 music-metadata 伪 id（/x/web-interface/view 返回 -404），
-// 实际可播放稿件在 related_archive.bvid；新歌无 related_archive，用顶层 bvid。
-function playableBvid(x: import('@/services/bilibiliApi').MusicCenterItem): string {
-  return x.related_archive?.bvid || x.bvid
-}
-
-function mapMusicSong(x: import('@/services/bilibiliApi').MusicCenterItem): MusicSong {
-  return {
-    bvid: playableBvid(x),
-    // 顶层 avid+cid：bvid 稿件 -404 时的回退音源（related_archive.cid 不可靠）
-    aid: String(x.aid || ''),
-    cid: String(x.cid || ''),
-    title: x.music_title,
-    artist: x.author,
-    coverUrl: normalizePic(x.cover),
-    album: x.album || '',
-    publishTime: x.publish_time,
-  }
-}
-
-// 综合热歌榜
-export async function getMusicCenterRank(ps = 30): Promise<MusicSong[]> {
-  const { getMusicComprehensiveRank } = await import('@/services/bilibiliApi')
-  const list = await getMusicComprehensiveRank(ps)
-  return list.filter((x) => playableBvid(x)).map(mapMusicSong)
-}
-
-// 新歌速递
-export async function getNewSongs(): Promise<MusicSong[]> {
-  const { getNewMusic } = await import('@/services/bilibiliApi')
-  const list = await getNewMusic()
-  return list.filter((x) => x.bvid).map(mapMusicSong)
-}
-
-// ===== B站收藏夹 =====
-
-export interface BiliFavoriteFolder {
-  id: number
-  title: string
-  mediaCount: number
-  coverUrl: string
-  description: string
-  updatedAt?: number
-}
-
-export async function getBiliFavoriteFolders(
-  mid?: number,
-): Promise<BiliFavoriteFolder[]> {
-  const userMid = mid || (await getUserInfo()).mid
-  if (!userMid) return []
-  const { getFavoriteFolders } = await import('@/services/bilibiliApi')
-  const data = await getFavoriteFolders(userMid)
-  return (data.list || []).map((folder) => ({
-    id: folder.id,
-    title: folder.title || '未命名收藏夹',
-    mediaCount: folder.media_count || 0,
-    coverUrl: normalizePic(folder.cover || ''),
-    description: folder.intro || '',
-    updatedAt: folder.mtime,
-  }))
-}
-
-export async function getBiliFavoriteFolderCover(mediaId: number): Promise<string> {
-  const { getFavoriteFolderMedias } = await import('@/services/bilibiliApi')
-  const detail = await getFavoriteFolderMedias(mediaId, 1, 40)
-  const firstCover = detail.medias?.find((media) => media.cover)?.cover || ''
-  return normalizePic(firstCover)
-}
-
-export async function getBiliFavoriteFolderTracks(
-  mediaId: number,
-  page = 1,
-  pageSize = 40,
-): Promise<{ info?: BiliFavoriteFolder; tracks: Track[]; hasMore: boolean }> {
-  const { getFavoriteFolderMedias } = await import('@/services/bilibiliApi')
-  const data = await getFavoriteFolderMedias(mediaId, page, pageSize)
-  const medias = data.medias || []
-  const tracks = medias
-    .filter((media) => Boolean(media.bvid || media.bv_id))
-    .map((media): Track => {
-      const bvid = media.bvid || media.bv_id || ''
-      return {
-        id: `bili-fav-${mediaId}-${bvid || media.id}`,
-        title: media.title || '未命名视频',
-        artist: media.upper?.name || 'Bilibili 用户',
-        coverUrl: normalizePic(media.cover || ''),
-        duration: media.duration || 0,
-        videoUrl: `https://www.bilibili.com/video/${bvid}`,
-        bvid,
-        aid: media.id,
-        playCount: media.cnt_info?.play || 0,
-        isLiked: false,
-      }
-    })
-
-  const info = data.info
-    ? {
-      id: data.info.id,
-      title: data.info.title || '未命名收藏夹',
-      mediaCount: data.info.media_count || tracks.length,
-      coverUrl: normalizePic(data.info.cover || ''),
-      description: data.info.intro || '',
-      updatedAt: data.info.mtime,
-    }
-    : undefined
-
-  return { info, tracks, hasMore: Boolean(data.has_more) }
-}
-
 // ===== 搜索 UP主 =====
 
 export interface UserResult {
@@ -489,230 +361,6 @@ export async function getRecommendVideos(ps = 20): Promise<VideoInfo[]> {
   const { getRecommendedVideos: rendererRec } = await import('@/services/bilibiliApi')
   const data = await rendererRec(ps)
   return (data.item || []).map(parseItem)
-}
-
-// ===== 关注动态视频 =====
-
-export interface DynamicVideo {
-  id: string
-  bvid: string
-  aid: string
-  cid: string
-  audioUrl?: string
-  title: string
-  coverUrl: string
-  duration: number
-  playCount: number
-  author: string
-  authorMid: number
-  publishedAt: number
-}
-
-export interface DynamicVideoPage {
-  videos: DynamicVideo[]
-  hasMore: boolean
-  offset: string
-}
-
-function parseDurationText(text: string): number {
-  if (!text) return 0
-  const parts = text.split(':').map(Number)
-  if (parts.some((part) => Number.isNaN(part))) return 0
-  if (parts.length === 2) return parts[0] * 60 + parts[1]
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
-  return 0
-}
-
-function parseCountText(text: string | undefined): number {
-  if (!text) return 0
-  const normalized = text.trim()
-  if (normalized.endsWith('万')) return Math.round(Number(normalized.slice(0, -1)) * 10000) || 0
-  if (normalized.endsWith('亿')) return Math.round(Number(normalized.slice(0, -1)) * 100000000) || 0
-  return Number(normalized) || 0
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      window.setTimeout(() => reject(new Error('请求超时')), timeoutMs)
-    }),
-  ])
-}
-
-export async function getFollowingDynamicVideos(
-  pageSize = 20,
-  offset = '',
-  options: { preloadAudio?: boolean } = {},
-): Promise<DynamicVideoPage> {
-  let user: { isLogin: boolean; mid: number; uname: string; face: string }
-  try {
-    user = await getUserInfo()
-  } catch {
-    return { videos: [], hasMore: false, offset: '' }
-  }
-  if (!user.isLogin || !user.mid) return { videos: [], hasMore: false, offset: '' }
-
-  const { getFollowingDynamicVideos: rendererDynamicVideos } = await import('@/services/bilibiliApi')
-  const data = await rendererDynamicVideos(offset)
-  const videos = (data.items || [])
-    .map((item) => {
-      const archive = item.modules?.module_dynamic?.major?.archive
-      const author = item.modules?.module_author
-      if (!archive?.bvid) return null
-      return {
-        id: item.id_str || archive.bvid,
-        bvid: archive.bvid,
-        aid: String(archive.aid || ''),
-        cid: String(archive.cid || ''),
-        title: archive.title || '未命名视频',
-        coverUrl: normalizePic(archive.cover || ''),
-        duration: parseDurationText(archive.duration_text || ''),
-        playCount: parseCountText(archive.stat?.play),
-        author: author?.name || user.uname || 'Bilibili 用户',
-        authorMid: author?.mid || user.mid,
-        publishedAt: author?.pub_ts || 0,
-      }
-    })
-    .filter((item): item is DynamicVideo => Boolean(item))
-    .slice(0, pageSize)
-
-  const preloadCount = options.preloadAudio === false ? 0 : Math.min(videos.length, 8)
-  for (let i = 0; i < preloadCount; i += 4) {
-    const batch = videos.slice(i, i + 4)
-    await Promise.all(batch.map(async (video, index) => {
-      try {
-        const source = await withTimeout(extractAudio(video.bvid, { aid: video.aid, cid: video.cid }), 5000)
-        videos[i + index] = {
-          ...video,
-          audioUrl: source.audioUrl,
-          duration: video.duration || source.duration,
-        }
-      } catch {
-        // 单个动态视频可能被删除、限权或无音频流，不影响其它动态展示。
-      }
-    }))
-  }
-
-  return {
-    videos,
-    hasMore: Boolean(data.has_more),
-    offset: data.offset || '',
-  }
-}
-
-// ===== B站官方字幕 =====
-
-export interface OfficialSubtitleLine {
-  from: number
-  to: number
-  content: string
-}
-
-export interface OfficialSubtitleResult {
-  lines: OfficialSubtitleLine[]
-  lan: string
-  lanDoc: string
-  sourceId: string
-}
-
-export interface OfficialSubtitleOption {
-  id: string
-  lan: string
-  lanDoc: string
-  subtitleUrl: string
-  label: string
-}
-
-function preferSubtitle(
-  subtitles: import('@/services/bilibiliApi').PlayerSubtitleItem[],
-): import('@/services/bilibiliApi').PlayerSubtitleItem | undefined {
-  return subtitles.find((item) => {
-    const lan = `${item.lan} ${item.lan_doc}`.toLowerCase()
-    return lan.includes('zh') || lan.includes('中文') || lan.includes('chinese')
-  }) || subtitles[0]
-}
-
-async function getTrackSubtitleContext(track: Track): Promise<{
-  bvid: string
-  cid: string | number
-  subtitles: import('@/services/bilibiliApi').PlayerSubtitleItem[]
-} | null> {
-  const bvid = track.bvid || track.id
-  if (!bvid) return null
-  const {
-    getVideoDetail: rendererDetail,
-    getVideoSubtitleList,
-  } = await import('@/services/bilibiliApi')
-
-  try {
-    const cid = track.cid || (await rendererDetail(bvid)).cid
-    if (!cid) return null
-    const subtitles = await getVideoSubtitleList(bvid, cid)
-    return { bvid, cid, subtitles }
-  } catch {
-    return null
-  }
-}
-
-function subtitleOptionId(item: import('@/services/bilibiliApi').PlayerSubtitleItem, index: number): string {
-  const basis = `${item.subtitle_url || item.lan || item.lan_doc || ''}:${item.id ?? ''}`
-  let hash = 0
-  for (let i = 0; i < basis.length; i += 1) {
-    hash = ((hash << 5) - hash + basis.charCodeAt(i)) | 0
-  }
-  return `${index}:${Math.abs(hash).toString(36)}`
-}
-
-function subtitleLabel(item: import('@/services/bilibiliApi').PlayerSubtitleItem, index: number): string {
-  return item.lan_doc || item.lan || `字幕 ${index + 1}`
-}
-
-export async function getBiliOfficialSubtitleOptions(track: Track): Promise<OfficialSubtitleOption[]> {
-  const ctx = await getTrackSubtitleContext(track)
-  if (!ctx) return []
-  return ctx.subtitles
-    .map((item, index) => ({
-      id: subtitleOptionId(item, index),
-      lan: item.lan || '',
-      lanDoc: item.lan_doc || '',
-      subtitleUrl: item.subtitle_url,
-      label: subtitleLabel(item, index),
-    }))
-    .filter((item) => Boolean(item.subtitleUrl))
-}
-
-export async function getBiliOfficialSubtitle(
-  track: Track,
-  subtitleId?: string,
-): Promise<OfficialSubtitleResult | null> {
-  const ctx = await getTrackSubtitleContext(track)
-  if (!ctx) return null
-  const { getSubtitleFile } = await import('@/services/bilibiliApi')
-
-  try {
-    const selected = subtitleId
-      ? ctx.subtitles.find((item, index) => subtitleOptionId(item, index) === subtitleId)
-      : preferSubtitle(ctx.subtitles)
-    if (!selected?.subtitle_url) return null
-    const file = await getSubtitleFile(selected.subtitle_url)
-    const lines = (file.body || [])
-      .filter((line) => line.content && Number.isFinite(line.from))
-      .map((line) => ({
-        from: Number(line.from),
-        to: Number(line.to || line.from),
-        content: line.content.trim(),
-      }))
-    if (!lines.length) return null
-    return {
-      lines,
-      lan: selected.lan || '',
-      lanDoc: selected.lan_doc || '',
-      sourceId: `bili-subtitle:${ctx.bvid}:${ctx.cid}:${subtitleOptionId(selected, ctx.subtitles.indexOf(selected))}`,
-    }
-  } catch {
-    return null
-  }
 }
 
 // ===== 热门/推荐 =====

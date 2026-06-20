@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Tray, ipcMain, nativeImage, net, protocol, screen, session, shell } from 'electron'
 import fs from 'fs'
 import path from 'path'
+import zlib from 'zlib'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { registerBiliApiHandlers } from './biliApi'
 import { registerLyricsApiHandlers } from './lyricsApi'
@@ -93,6 +94,7 @@ interface TrayPlayerState {
   hasTrack: boolean
   title: string
   artist: string
+  albumTitle?: string
   coverUrl: string
   isPlaying: boolean
   queueLength: number
@@ -103,10 +105,201 @@ let trayPlayerState: TrayPlayerState = {
   hasTrack: false,
   title: '未在播放',
   artist: '搜索并播放音乐',
+  albumTitle: '',
   coverUrl: '',
   isPlaying: false,
   queueLength: 0,
   theme: 'dark',
+}
+
+let taskbarCoverUrl = ''
+let taskbarCoverRequestId = 0
+
+const pngCrcTable = new Uint32Array(256).map((_value, index) => {
+  let c = index
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+  return c >>> 0
+})
+
+function pngCrc32(buffers: Buffer[]): number {
+  let crc = 0xffffffff
+  for (const buffer of buffers) {
+    for (const byte of buffer) {
+      crc = pngCrcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function pngChunk(type: string, data: Buffer) {
+  const typeBuffer = Buffer.from(type, 'ascii')
+  const length = Buffer.alloc(4)
+  const crc = Buffer.alloc(4)
+  length.writeUInt32BE(data.length, 0)
+  crc.writeUInt32BE(pngCrc32([typeBuffer, data]), 0)
+  return Buffer.concat([length, typeBuffer, data, crc])
+}
+
+function rgba(r: number, g: number, b: number, a = 255) {
+  return { r, g, b, a }
+}
+
+function createPngImage(width: number, height: number, pixels: Buffer) {
+  const raw = Buffer.alloc((width * 4 + 1) * height)
+  for (let y = 0; y < height; y += 1) {
+    const rawRow = y * (width * 4 + 1)
+    const pixelRow = y * width * 4
+    raw[rawRow] = 0
+    pixels.copy(raw, rawRow + 1, pixelRow, pixelRow + width * 4)
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header[8] = 8
+  header[9] = 6
+  header[10] = 0
+  header[11] = 0
+  header[12] = 0
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
+function drawPixel(pixels: Buffer, size: number, x: number, y: number, color: ReturnType<typeof rgba>) {
+  if (x < 0 || y < 0 || x >= size || y >= size) return
+  const offset = (y * size + x) * 4
+  pixels[offset] = color.r
+  pixels[offset + 1] = color.g
+  pixels[offset + 2] = color.b
+  pixels[offset + 3] = color.a
+}
+
+function drawRect(pixels: Buffer, size: number, x: number, y: number, width: number, height: number, color: ReturnType<typeof rgba>) {
+  for (let row = y; row < y + height; row += 1) {
+    for (let col = x; col < x + width; col += 1) drawPixel(pixels, size, col, row, color)
+  }
+}
+
+function drawCircle(pixels: Buffer, size: number, cx: number, cy: number, radius: number, color: ReturnType<typeof rgba>) {
+  const rr = radius * radius
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const dx = x + 0.5 - cx
+      const dy = y + 0.5 - cy
+      if (dx * dx + dy * dy <= rr) drawPixel(pixels, size, x, y, color)
+    }
+  }
+}
+
+function drawTriangle(
+  pixels: Buffer,
+  size: number,
+  points: Array<{ x: number; y: number }>,
+  color: ReturnType<typeof rgba>,
+) {
+  const [a, b, c] = points
+  const minX = Math.floor(Math.min(a.x, b.x, c.x))
+  const maxX = Math.ceil(Math.max(a.x, b.x, c.x))
+  const minY = Math.floor(Math.min(a.y, b.y, c.y))
+  const maxY = Math.ceil(Math.max(a.y, b.y, c.y))
+  const area = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const px = x + 0.5
+      const py = y + 0.5
+      const w1 = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / area
+      const w2 = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / area
+      const w3 = 1 - w1 - w2
+      if (w1 >= 0 && w2 >= 0 && w3 >= 0) drawPixel(pixels, size, x, y, color)
+    }
+  }
+}
+
+function thumbarIcon(name: 'prev' | 'play' | 'pause' | 'next') {
+  const size = 32
+  const pixels = Buffer.alloc(size * size * 4)
+  const white = rgba(255, 255, 255)
+  drawCircle(pixels, size, 16, 16, 15, rgba(32, 33, 36))
+  if (name === 'play') {
+    drawTriangle(pixels, size, [{ x: 12, y: 9 }, { x: 12, y: 23 }, { x: 23, y: 16 }], white)
+  } else if (name === 'pause') {
+    drawRect(pixels, size, 10, 9, 5, 14, white)
+    drawRect(pixels, size, 18, 9, 5, 14, white)
+  } else if (name === 'prev') {
+    drawRect(pixels, size, 8, 9, 3, 14, white)
+    drawTriangle(pixels, size, [{ x: 23, y: 9 }, { x: 23, y: 23 }, { x: 12, y: 16 }], white)
+  } else {
+    drawRect(pixels, size, 21, 9, 3, 14, white)
+    drawTriangle(pixels, size, [{ x: 9, y: 9 }, { x: 9, y: 23 }, { x: 20, y: 16 }], white)
+  }
+  const image = nativeImage.createFromBuffer(createPngImage(size, size, pixels))
+  return image.isEmpty() ? loadAppIcon().resize({ width: size, height: size }) : image
+}
+
+function updateTaskbarThumbarButtons() {
+  if (process.platform !== 'win32' || !mainWindow) return
+  if (!trayPlayerState.hasTrack) {
+    mainWindow.setThumbarButtons([])
+    mainWindow.setThumbnailToolTip('BiliMusic')
+    return
+  }
+  mainWindow.setThumbnailToolTip(`${trayPlayerState.title} - ${trayPlayerState.artist}`)
+  mainWindow.setThumbarButtons([
+    {
+      tooltip: '上一首',
+      icon: thumbarIcon('prev'),
+      click: () => sendTrayCommand('prev'),
+    },
+    {
+      tooltip: trayPlayerState.isPlaying ? '暂停' : '播放',
+      icon: thumbarIcon(trayPlayerState.isPlaying ? 'pause' : 'play'),
+      click: () => sendTrayCommand('toggle-play'),
+    },
+    {
+      tooltip: '下一首',
+      icon: thumbarIcon('next'),
+      click: () => sendTrayCommand('next'),
+    },
+  ])
+}
+
+async function updateTaskbarCoverIcon() {
+  if (process.platform !== 'win32' || !mainWindow) return
+  const coverUrl = trayPlayerState.hasTrack ? trayPlayerState.coverUrl : ''
+  if (coverUrl === taskbarCoverUrl) return
+  taskbarCoverUrl = coverUrl
+  const requestId = ++taskbarCoverRequestId
+
+  if (!coverUrl) {
+    mainWindow.setIcon(loadAppIcon())
+    mainWindow.setOverlayIcon(null, 'BiliMusic')
+    return
+  }
+
+  try {
+    const response = await net.fetch(coverUrl)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (requestId !== taskbarCoverRequestId || !mainWindow) return
+    const cover = nativeImage.createFromBuffer(buffer)
+    if (cover.isEmpty()) return
+    const largeCover = cover.resize({ width: 256, height: 256 })
+    mainWindow.setIcon(largeCover)
+    mainWindow.setOverlayIcon(cover.resize({ width: 32, height: 32 }), trayPlayerState.albumTitle || trayPlayerState.title || 'BiliMusic')
+  } catch {
+    if (requestId === taskbarCoverRequestId && mainWindow) {
+      mainWindow.setIcon(loadAppIcon())
+      mainWindow.setOverlayIcon(null, 'BiliMusic')
+    }
+  }
+}
+
+function updateTaskbarPlayerControls() {
+  updateTaskbarThumbarButtons()
+  void updateTaskbarCoverIcon()
 }
 
 // 应用图标：dev 时从 electron 源目录加载，打包后从 dist-electron 同级加载（由 copy 脚本随构建复制）
@@ -474,8 +667,39 @@ function createTray() {
 }
 
 function hideToTray() {
+  if (mainWindow?.isFullScreen()) {
+    mainWindow.setFullScreen(false)
+    mainWindow.webContents.send('window:fullscreen-change', false)
+    mainWindow.webContents.send('window:maximized-change', Boolean(mainWindow.isMaximized()))
+  }
   mainWindow?.hide()
   if (process.platform === 'darwin') app.dock?.hide()
+}
+
+function runAfterLeavingFullscreen(action: () => void) {
+  if (!mainWindow) return
+  if (!mainWindow.isFullScreen()) {
+    action()
+    return
+  }
+
+  const targetWindow = mainWindow
+  let didRun = false
+  const runAction = () => {
+    if (didRun) return
+    didRun = true
+    if (!targetWindow.isDestroyed()) action()
+  }
+
+  targetWindow.once('leave-full-screen', runAction)
+  targetWindow.setFullScreen(false)
+  targetWindow.webContents.send('window:fullscreen-change', false)
+  targetWindow.webContents.send('window:maximized-change', Boolean(targetWindow.isMaximized()))
+  setTimeout(() => {
+    if (targetWindow.isDestroyed() || targetWindow.isFullScreen()) return
+    targetWindow.removeListener('leave-full-screen', runAction)
+    runAction()
+  }, 220)
 }
 
 function sendTrayCommand(command: TrayCommand) {
@@ -537,7 +761,7 @@ function createWindow() {
   })
 
   const sendMaximizeState = () => {
-    mainWindow?.webContents.send('window:maximized-change', Boolean(mainWindow?.isMaximized() || mainWindow?.isFullScreen()))
+    mainWindow?.webContents.send('window:maximized-change', Boolean(mainWindow?.isMaximized()))
   }
   const sendFullscreenState = () => {
     mainWindow?.webContents.send('window:fullscreen-change', Boolean(mainWindow?.isFullScreen()))
@@ -555,22 +779,24 @@ function createWindow() {
 }
 
 // 窗口控制 IPC
-ipcMain.on('window:minimize', () => mainWindow?.minimize())
 ipcMain.on('window:maximize', () => {
-  if (mainWindow?.isMaximized()) {
-    mainWindow.unmaximize()
-  } else {
-    mainWindow?.maximize()
-  }
+  runAfterLeavingFullscreen(() => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow?.maximize()
+    }
+  })
 })
-ipcMain.on('window:close', hideToTray)
-ipcMain.handle('window:isMaximized', () => Boolean(mainWindow?.isMaximized() || mainWindow?.isFullScreen()))
+ipcMain.on('window:minimize', () => runAfterLeavingFullscreen(() => mainWindow?.minimize()))
+ipcMain.on('window:close', () => runAfterLeavingFullscreen(hideToTray))
+ipcMain.handle('window:isMaximized', () => Boolean(mainWindow?.isMaximized()))
 ipcMain.on('window:toggle-fullscreen', () => {
   if (!mainWindow) return
   const next = !mainWindow.isFullScreen()
   mainWindow.setFullScreen(next)
   mainWindow.webContents.send('window:fullscreen-change', next)
-  mainWindow.webContents.send('window:maximized-change', Boolean(mainWindow.isMaximized() || next))
+  mainWindow.webContents.send('window:maximized-change', Boolean(mainWindow.isMaximized()))
 })
 ipcMain.on('window:set-button-visibility', (_event, visible: boolean) => {
   if (!isHarmonyOS) return
@@ -589,11 +815,14 @@ ipcMain.on('tray:player-state', (_event, state: TrayPlayerState) => {
     hasTrack: Boolean(state?.hasTrack),
     title: String(state?.title || '未在播放'),
     artist: String(state?.artist || '搜索并播放音乐'),
+    albumTitle: String(state?.albumTitle || ''),
     coverUrl: String(state?.coverUrl || ''),
     isPlaying: Boolean(state?.isPlaying),
     queueLength: Number(state?.queueLength || 0),
+    theme: state?.theme === 'light' ? 'light' : 'dark',
   }
   updateTrayState()
+  updateTaskbarPlayerControls()
 })
 ipcMain.on('tray:command', (_event, command: TrayCommand) => sendTrayCommand(command))
 ipcMain.handle('tray:get-state', () => trayPlayerState)

@@ -1,7 +1,9 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Disc3, Loader2, Play, RefreshCw, TrendingUp } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { extractAudio, getMusicChannelRecommendations, getMusicRanking, type VideoInfo } from '@/services/api'
+import { RELAXED_SCROLL_REQUEST_GATE, useRequestGate, type RequestGateSource } from '@/hooks/useRequestGate'
+import { extractAudio } from '@/services/api'
+import { getMusicChannelRecommendations, getMusicRanking, type VideoInfo } from '@/services/biliMusic'
 import type { Track } from '@/types'
 import {
   ActionButton,
@@ -14,6 +16,9 @@ import {
   TrackList,
   TrackListRow,
 } from '@/components/AppleMusicPage'
+
+const FEATURED_PAGE_SIZE = 12
+const AUTO_LOAD_ROOT_MARGIN = '560px 0px'
 
 function videoToTrack(video: VideoInfo): Track {
   return {
@@ -67,7 +72,14 @@ export default function Discover() {
   const [featuredTracks, setFeaturedTracks] = useState<VideoInfo[]>([])
   const [rankTracks, setRankTracks] = useState<VideoInfo[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [featuredPage, setFeaturedPage] = useState(1)
+  const [featuredHasMore, setFeaturedHasMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [moreError, setMoreError] = useState('')
+  const featuredSentinelRef = useRef<HTMLDivElement | null>(null)
+  const loadingMoreRef = useRef(false)
+  const requestGate = useRequestGate(RELAXED_SCROLL_REQUEST_GATE)
   const player = usePlayer()
 
   useEffect(() => {
@@ -75,11 +87,13 @@ export default function Discover() {
   }, [])
 
   async function loadMusicRanking() {
+    loadingMoreRef.current = false
     setLoading(true)
     setError(null)
+    requestGate.reset()
     try {
       const [featured, rank] = await Promise.all([
-        getMusicChannelRecommendations(1, 12),
+        getMusicChannelRecommendations(1, FEATURED_PAGE_SIZE),
         getMusicRanking(),
       ])
       const [featuredWithAudio, rankWithAudio] = await Promise.all([
@@ -87,6 +101,9 @@ export default function Discover() {
         preloadAudio(rank, 6),
       ])
       setFeaturedTracks(featuredWithAudio)
+      setFeaturedPage(1)
+      setFeaturedHasMore(featured.length >= FEATURED_PAGE_SIZE)
+      setMoreError('')
       setRankTracks(rankWithAudio)
     } catch (e: any) {
       setError(e.message || '加载失败')
@@ -95,8 +112,54 @@ export default function Discover() {
     }
   }
 
+  const loadMoreFeatured = useCallback(async (source: RequestGateSource = 'manual') => {
+    if (!featuredHasMore || loadingMore || loading || loadingMoreRef.current) return
+    if (!requestGate.canStart(source)) {
+      if (source === 'manual') setMoreError('加载太频繁，请稍等一下再试。')
+      return
+    }
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    setMoreError('')
+    try {
+      const nextPage = featuredPage + 1
+      const page = await getMusicChannelRecommendations(nextPage, FEATURED_PAGE_SIZE)
+      const uniquePage = getUniqueIncomingVideos(featuredTracks, page)
+      const pageWithAudio = await preloadAudio(uniquePage, 6)
+      const merged = [...featuredTracks, ...pageWithAudio]
+      setFeaturedTracks(merged)
+      setFeaturedPage(nextPage)
+      setFeaturedHasMore(page.length >= FEATURED_PAGE_SIZE && pageWithAudio.length > 0)
+    } catch {
+      if (source === 'auto') requestGate.markAutoError()
+      setMoreError('加载更多精选推荐失败，请稍后再试。')
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
+  }, [featuredHasMore, featuredPage, featuredTracks, loading, loadingMore, requestGate])
+
+  useEffect(() => {
+    const sentinel = featuredSentinelRef.current
+    if (!sentinel || !featuredHasMore || loading || error) return
+
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[0]
+      if (entry?.isIntersecting) {
+        loadMoreFeatured('auto')
+      }
+    }, {
+      root: null,
+      rootMargin: AUTO_LOAD_ROOT_MARGIN,
+      threshold: 0,
+    })
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [error, featuredHasMore, loadMoreFeatured, loading])
+
   const handlePlayAll = useCallback(() => {
-    const playlist = [...featuredTracks, ...rankTracks].slice(0, 18).map(videoToTrack)
+    const playlist = [...rankTracks, ...featuredTracks].slice(0, 24).map(videoToTrack)
     if (playlist.length > 0) player.playAll(playlist)
   }, [featuredTracks, rankTracks, player])
 
@@ -104,9 +167,8 @@ export default function Discover() {
     player.playNow(videoToTrack(video))
   }, [player])
 
-  const featured = featuredTracks.slice(0, 6)
   const list = rankTracks.slice(0, 30)
-  const heroImage = featured[0]?.pic
+  const heroImage = rankTracks[0]?.pic || featuredTracks[0]?.pic
   const hasTracks = featuredTracks.length > 0 || rankTracks.length > 0
 
   return (
@@ -135,25 +197,6 @@ export default function Discover() {
         />
       ) : (
         <>
-          {featured.length > 0 && (
-            <MusicSection title="精选推荐" icon={<TrendingUp size={22} />}>
-              <FeaturedGrid>
-                {featured.map((video, index) => {
-                  const track = videoToTrack(video)
-                  return (
-                    <FeaturedTrackCard
-                      key={video.bvid}
-                      track={track}
-                      index={index + 1}
-                      isCurrent={player.currentTrack?.id === video.bvid}
-                      onPlay={() => handlePlayOne(video)}
-                    />
-                  )
-                })}
-              </FeaturedGrid>
-            </MusicSection>
-          )}
-
           <MusicSection title="热门排行榜" icon={<Disc3 size={22} />}>
             <TrackList>
               {list.map((video, index) => {
@@ -171,8 +214,50 @@ export default function Discover() {
               })}
             </TrackList>
           </MusicSection>
+
+          {featuredTracks.length > 0 && (
+            <div className="uniform-card-grid">
+              <MusicSection title="精选推荐" icon={<TrendingUp size={22} />}>
+                <FeaturedGrid>
+                  {featuredTracks.map((video, index) => {
+                    const track = videoToTrack(video)
+                    return (
+                      <FeaturedTrackCard
+                        key={video.bvid}
+                        track={track}
+                        index={index + 1}
+                        isCurrent={player.currentTrack?.id === video.bvid}
+                        onPlay={() => handlePlayOne(video)}
+                      />
+                    )
+                  })}
+                </FeaturedGrid>
+              </MusicSection>
+            </div>
+          )}
+
+          {featuredHasMore && (
+            <div className="discover-load-more">
+              <ActionButton onClick={() => loadMoreFeatured('manual')} disabled={loadingMore} tone="subtle">
+                {loadingMore ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+                {loadingMore ? '正在加载' : '获取更多精选'}
+              </ActionButton>
+            </div>
+          )}
+          <div ref={featuredSentinelRef} className="discover-load-sentinel" aria-hidden="true" />
+          {moreError && <div className="discover-load-error">{moreError}</div>}
         </>
       )}
     </MusicPageShell>
   )
+}
+
+function getUniqueIncomingVideos(current: VideoInfo[], incoming: VideoInfo[]): VideoInfo[] {
+  const seen = new Set(current.map((video) => video.bvid || String(video.aid)))
+  return incoming.filter((video) => {
+    const key = video.bvid || String(video.aid)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }

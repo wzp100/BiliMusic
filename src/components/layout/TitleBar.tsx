@@ -1,10 +1,17 @@
-import { Maximize2, Minimize2, Minus, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import appIcon from '@/assets/icon.png'
+import { Maximize2, Minimize2, Minus, Search, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
+  const [query, setQuery] = useState('')
+  const location = useLocation()
+  const navigate = useNavigate()
   const useNativeWindowControls = window.electronAPI?.platform === 'openharmony'
+  const searchQuery = useMemo(() => {
+    if (location.pathname !== '/search') return ''
+    return new URLSearchParams(location.search).get('q') || ''
+  }, [location.pathname, location.search])
 
   useEffect(() => {
     const api = window.electronAPI
@@ -14,12 +21,31 @@ export default function TitleBar() {
     return api.onMaximizedChange?.(setMaximized)
   }, [])
 
+  useEffect(() => {
+    setQuery(searchQuery)
+  }, [searchQuery])
+
+  const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const keyword = query.trim()
+    if (!keyword) {
+      navigate('/search')
+      return
+    }
+    navigate(`/search?q=${encodeURIComponent(keyword)}&type=video`)
+  }
+
   return (
     <div className={`app-titlebar ${useNativeWindowControls ? 'app-titlebar--native' : ''}`}>
-      <div className="app-titlebar__brand">
-        <img src={appIcon} alt="" className="app-titlebar__logo" draggable={false} />
-        BiliMusic
-      </div>
+      <form className="app-titlebar__search" onSubmit={submitSearch}>
+        <Search size={15} strokeWidth={2.2} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索 B站音乐"
+          aria-label="搜索 B站音乐"
+        />
+      </form>
 
       {!useNativeWindowControls && (
         <div className="app-titlebar__controls">

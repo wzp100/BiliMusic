@@ -44,6 +44,23 @@ export function registerBiliApiHandlers() {
     return fetchBiliApi(`/x/v3/fav/folder/created/list-all?up_mid=${mid}`)
   })
 
+  // 添加视频到收藏夹
+  ipcMain.handle('bili:favoriteResourceDeal', async (_event, rid: number, mediaId: number) => {
+    if (!Number.isFinite(rid) || !Number.isFinite(mediaId)) {
+      throw createBiliError(-1, '收藏参数无效', 'bili:favoriteResourceDeal')
+    }
+    const cookies = await session.defaultSession.cookies.get({ url: BILI_API })
+    const biliJct = cookies.find(c => c.name === 'bili_jct')?.value || ''
+    if (!biliJct) throw createBiliError(-101, '需要先登录 Bilibili', 'bili:favoriteResourceDeal')
+    return postBiliApi('/x/v3/fav/resource/deal', {
+      rid: String(rid),
+      type: '2',
+      add_media_ids: String(mediaId),
+      del_media_ids: '',
+      csrf: biliJct,
+    })
+  })
+
   // 下载音频文件到本地
   ipcMain.handle('bili:downloadAudio', async (_event, audioUrl: string, filename: string) => {
     const downloadDir = path.join(app.getPath('userData'), 'downloads')
@@ -98,7 +115,7 @@ export function registerBiliApiHandlers() {
     const data = await response.json()
 
     if (data.code !== 0) {
-      throw { code: data.code, message: data.message }
+      throw createBiliError(data.code, data.message, 'bili:qrGenerate')
     }
 
     return {
@@ -205,7 +222,7 @@ async function fetchBiliApi(urlPath: string): Promise<any> {
   const data = await response.json()
 
   if (data.code !== 0) {
-    throw { code: data.code, message: data.message, path: urlPath }
+    throw createBiliError(data.code, data.message, urlPath)
   }
 
   return data.data
@@ -221,4 +238,40 @@ function parseCookieName(setCookie: string): string {
 function parseCookieValue(setCookie: string): string {
   const pair = setCookie.split(';')[0]
   return pair.split('=').slice(1).join('=').trim()
+}
+
+async function postBiliApi(urlPath: string, body: Record<string, string>): Promise<any> {
+  const url = `${BILI_API}${urlPath}`
+  const cookies = await session.defaultSession.cookies.get({ url: BILI_API })
+  const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+  const form = new URLSearchParams(body)
+
+  const headers: Record<string, string> = {
+    Referer: BILI_REFERER,
+    Origin: 'https://www.bilibili.com',
+    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+  }
+  if (cookieHeader) {
+    headers['Cookie'] = cookieHeader
+  }
+
+  const response = await net.fetch(url, {
+    method: 'POST',
+    headers,
+    body: form.toString(),
+  })
+  const data = await response.json()
+
+  if (data.code !== 0) {
+    throw createBiliError(data.code, data.message, urlPath)
+  }
+
+  return data.data
+}
+
+function createBiliError(code: number, message: string, path?: string): Error & { code?: number; path?: string } {
+  const error = new Error(message || `Bilibili API error: ${code}`) as Error & { code?: number; path?: string }
+  error.code = code
+  if (path) error.path = path
+  return error
 }
